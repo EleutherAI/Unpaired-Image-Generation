@@ -12,15 +12,21 @@ class T2IVAE(nn.Module):
         self.img_encoder = timm.create_model('resnet18', pretrained=False, num_classes=0).to(device) # hidden_size: 512
         self.img_encoder.global_pool = nn.Identity() # so we can get the feature map
         self.img_decoder = self.get_img_decoder().to(device)
-        t5_size = 'large'
+        t5_size = 'small'
         self.t5 = T5ForConditionalGeneration.from_pretrained('t5-' + t5_size).to(device)
         self.tokenizer = T5Tokenizer.from_pretrained('t5-' + t5_size)
 
-        self.img_projection = nn.LazyLinear(1024)
-        self.text_projection = nn.LazyLinear(1024)
+        # self.img_projection = nn.LazyLinear(1024)
+        # self.text_projection = nn.LazyLinear(1024)
+
+        self.img_feat_means = nn.LazyLinear(1024)
+        self.img_feat_logvars = nn.LazyLinear(1024)
+
+        self.text_feat_means = nn.LazyLinear(1024)
+        self.text_feat_logvars = nn.LazyLinear(1024)
 
     def get_img_decoder(self):
-        # convolutional decoder
+        # convolutional decoder # TODO: replace with diffusion decoder
         return nn.Sequential(
             nn.ConvTranspose2d(512, 256, 4, 2, 1), # 512, 7, 7 -> 256, 14, 14
             nn.ReLU(),
@@ -42,10 +48,26 @@ class T2IVAE(nn.Module):
 
         img_feats = self.img_encoder(img)
         pred_img = self.img_decoder(img_feats)
-        pred_text = self.t5.generate(input_ids=text, attention_mask=text_inputs["attention_mask"].to(device))
-        
+        # pred_text = self.t5.generate(input_ids=text, attention_mask=text_inputs["attention_mask"].to(device))
+        # Modify this line to get the output from the T5 model directly
+        # output_t5 = self.t5(input_ids=text, attention_mask=text_inputs["attention_mask"].to(device), decoder_input_ids=text[:, :-1])
+        output_t5 = self.t5(input_ids=text, attention_mask=text_inputs["attention_mask"].to(device), decoder_input_ids=text)
+
+        # Get the logits from the T5 model's output
+        pred_text = output_t5.logits
+        print("pred_text in forward: ", pred_text.shape)
+        # padding each sequence to 100 tokens
+        pred_text = torch.nn.functional.pad(pred_text, (0, 0, 0, 200 - pred_text.shape[1]))
+        print("pred_text in forward after padding: ", pred_text.shape)
+        pred_text = output_t5.logits.view(-1, text.shape[1], self.t5.config.vocab_size)
+
         # getting the hidden state from the encoder
         text_feats = self.t5.get_encoder()(input_ids=text, attention_mask=text_inputs["attention_mask"].to(device)).last_hidden_state
+        print("text_feats: ", text_feats.shape)
+
+        # padding each sequence to 100 tokens
+        text_feats = torch.nn.functional.pad(text_feats, (0, 0, 0, 200 - text_feats.shape[1]))
+        print("text_feats after padding: ", text_feats.shape)
 
         flattened_img_feats = img_feats.view(img_feats.shape[0], -1).to(device)
         flattened_text_feats = text_feats.view(text_feats.shape[0], -1).to(device)
@@ -53,16 +75,26 @@ class T2IVAE(nn.Module):
         # print("flattened_img_feats: ", flattened_img_feats.shape)
         # print("flattened_text_feats: ", flattened_text_feats.shape)
 
-        proj_img_feats = self.img_projection(flattened_img_feats)
-        proj_text_feats = self.text_projection(flattened_text_feats)
+        # proj_img_feats = self.img_projection(flattened_img_feats)
+        # proj_text_feats = self.text_projection(flattened_text_feats)
+
+        img_feat_means = self.img_feat_means(flattened_img_feats)
+        img_feat_logvars = self.img_feat_logvars(flattened_img_feats)
+
+        text_feat_means = self.text_feat_means(flattened_text_feats)
+        text_feat_logvars = self.text_feat_logvars(flattened_text_feats)
 
         return {
             "pred_img": pred_img,
             "pred_text": pred_text,
             "img_feats": img_feats,
             "text_feats": text_feats,
-            "proj_img_feats": proj_img_feats,
-            "proj_text_feats": proj_text_feats,
+            # "proj_img_feats": proj_img_feats,
+            # "proj_text_feats": proj_text_feats,
+            "img_feat_means": img_feat_means,
+            "img_feat_logvars": img_feat_logvars,
+            "text_feat_means": text_feat_means,
+            "text_feat_logvars": text_feat_logvars
         }
     
 if __name__ == "__main__":
@@ -77,8 +109,12 @@ if __name__ == "__main__":
     print("pred_text", output["pred_text"].shape)
     print("img_feats", output["img_feats"].shape)
     print("text_feats: ", output["text_feats"].shape)
-    print("proj_img_feats: ", output["proj_img_feats"].shape)
-    print("proj_text_feats: ", output["proj_text_feats"].shape)
-    
+    # print("proj_img_feats: ", output["proj_img_feats"].shape)
+    # print("proj_text_feats: ", output["proj_text_feats"].shape)
+    print("img_feat_means: ", output["img_feat_means"].shape)
+    print("img_feat_logvars: ", output["img_feat_logvars"].shape)
+    print("text_feat_means: ", output["text_feat_means"].shape)
+    print("text_feat_logvars: ", output["text_feat_logvars"].shape)
+
     decoded_text = model.tokenizer.batch_decode(output["pred_text"], skip_special_tokens=True)
     print("decoded pred_text: ", decoded_text)
