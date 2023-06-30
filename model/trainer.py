@@ -13,7 +13,10 @@ def train_epoch(model, train_loader, optimizer):
     for img, text in tqdm(train_loader):
         print('text: ', text)
         img = img.to(device).float()
-        text_input = model.tokenizer(text[0], return_tensors="pt", padding=True).to(device)
+        # text_input = model.tokenizer(text, return_tensors="pt", padding=True).to(device)
+        text_input = text.to(device)
+        print('tokenized text: ', text_input) # dict 
+        print('tokenized text shape: ', text_input["input_ids"].shape) # token ids
         # text_input = model.tokenizer.batch_encode_plus(
         #             text[0],
         #             padding='max_length',
@@ -38,14 +41,24 @@ def val_epoch(model, val_loader):
     model.eval()
     loss_sum = 0
     with torch.no_grad():
-        for img, text in tqdm(val_loader):
-            img = img.to(device)
-            text_input = model.tokenizer(text, return_tensors="pt", padding=True)
+        for img, text in tqdm(train_loader):
+            print('text: ', text)
+            img = img.to(device).float()
+            # text_input = model.tokenizer(text, return_tensors="pt", padding=True).to(device)
+            text_input = text.to(device)
+            print('tokenized text: ', text_input) # dict 
+            print('tokenized text shape: ', text_input["input_ids"].shape) # token ids
+            # text_input = model.tokenizer.batch_encode_plus(
+            #             text[0],
+            #             padding='max_length',
+            #             max_length=32,
+            #             return_tensors='pt',
+            #             truncation=True
+            #             )["input_ids"].to(device)
 
             output = model(img, text_input)
 
             loss = criterion(output, img, text_input)
-
             loss_sum += loss.item()
     
     return loss_sum / len(val_loader)
@@ -67,6 +80,7 @@ def criterion(output, img, text_input):
     print('pred_text size: ', pred_text_logits_flat.size(), 'input_ids size: ', input_ids_flat.size())
     text_loss = torch.nn.functional.cross_entropy(pred_text_logits_flat, input_ids_flat)
     print('text_loss size: ', text_loss.size())
+    # text_loss = 0
 
     # applying KL divergence loss between output['img_feat_means'], output['img_feat_logvars'], output['text_feat_means'], output['text_feat_logvars']
     print('img_feat_means size: ', output['img_feat_means'].size(), 'img_feat_logvars size: ', output['img_feat_logvars'].size())
@@ -83,7 +97,13 @@ def criterion(output, img, text_input):
 def custom_collate_fn(batch):
     images, texts = zip(*batch)
 
-    text_input = model.tokenizer(texts[0], return_tensors="pt", padding=True)["input_ids"]
+    # getting just the first caption from each element in the batch
+    # and prepending each caption with "summarize: "
+    texts = ["summarize: " + text[0] for text in texts]
+    print('texts in collate_fn: ', texts)
+
+    text_input = model.tokenizer(texts[0], return_tensors="pt", padding=True) # ["input_ids"]
+    print('text_input in collate_fn: ', text_input["input_ids"].shape)
 
     # # Define the image transformations
     # transform = transforms.Compose([
@@ -96,9 +116,10 @@ def custom_collate_fn(batch):
     # Convert images list into a PyTorch tensor
     images = torch.stack(images)
 
-    print('text_input: ', text_input)
+    print('text_input ids: ', text_input["input_ids"])
     # Pad sequences for text
-    text_input = pad_sequence([torch.tensor(t) for t in text_input], batch_first=True)
+    text_input["input_ids"] = pad_sequence([torch.tensor(t) for t in text_input["input_ids"]], batch_first=True)
+    print('padded text_input ids: ', text_input["input_ids"])
 
     return images, text_input
 
@@ -123,7 +144,7 @@ if __name__ == "__main__":
                             annFile = 'coco/annotations/annotations_trainval2014/annotations/captions_val2014.json',
                             transform=transforms.PILToTensor())
     
-    train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)  # , collate_fn=custom_collate_fn)
+    train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True, collate_fn=custom_collate_fn)
     val_loader = DataLoader(val_dataset, batch_size=8, shuffle=True)
     
     for epoch in range(10):

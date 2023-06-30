@@ -42,9 +42,7 @@ class T2IVAE(nn.Module):
 
     def forward(self, img, text_inputs):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        text = text_inputs["input_ids"].to(device)
-        print("img: ", img.shape)
-        print("text tokens: ", text.shape) # tokenized text
+        text = text_inputs["input_ids"].to(device) # token ids (batch_size, seq_len)
 
         img_feats = self.img_encoder(img)
         pred_img = self.img_decoder(img_feats)
@@ -55,19 +53,27 @@ class T2IVAE(nn.Module):
 
         # Get the logits from the T5 model's output
         pred_text = output_t5.logits
-        print("pred_text in forward: ", pred_text.shape)
-        # padding each sequence to 100 tokens
-        pred_text = torch.nn.functional.pad(pred_text, (0, 0, 0, 200 - pred_text.shape[1]))
-        print("pred_text in forward after padding: ", pred_text.shape)
+        print("pred_text in forward: ", pred_text.shape) # (batch_size, seq_len, vocab_size)
+
+        # padding each sequence if it is less than 100 tokens, else truncate it
+        if pred_text.shape[1] < 100:
+            pred_text = torch.nn.functional.pad(pred_text, (0, 0, 0, 100 - pred_text.shape[1]))
+        else:
+            pred_text = pred_text[:, :100, :]
+
+        print("pred_text in forward after padding: ", pred_text.shape) # (batch_size, max_len, vocab_size)
         pred_text = output_t5.logits.view(-1, text.shape[1], self.t5.config.vocab_size)
 
         # getting the hidden state from the encoder
         text_feats = self.t5.get_encoder()(input_ids=text, attention_mask=text_inputs["attention_mask"].to(device)).last_hidden_state
-        print("text_feats: ", text_feats.shape)
+        print("text_feats: ", text_feats.shape) # (batch_size, seq_len, hidden_size)
 
-        # padding each sequence to 100 tokens
-        text_feats = torch.nn.functional.pad(text_feats, (0, 0, 0, 200 - text_feats.shape[1]))
-        print("text_feats after padding: ", text_feats.shape)
+        # padding each sequence if it is less than 100 tokens, else truncate it
+        if text_feats.shape[1] < 100:
+            text_feats = torch.nn.functional.pad(text_feats, (0, 0, 0, 100 - text_feats.shape[1]))
+        else:
+            text_feats = text_feats[:, :100, :]
+        print("text_feats after padding: ", text_feats.shape) # (batch_size, max_len, hidden_size)
 
         flattened_img_feats = img_feats.view(img_feats.shape[0], -1).to(device)
         flattened_text_feats = text_feats.view(text_feats.shape[0], -1).to(device)
