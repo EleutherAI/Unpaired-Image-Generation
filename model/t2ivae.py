@@ -16,14 +16,16 @@ class T2IVAE(nn.Module):
         self.t5 = T5ForConditionalGeneration.from_pretrained('t5-' + t5_size).to(device)
         self.tokenizer = T5Tokenizer.from_pretrained('t5-' + t5_size)
 
-        # self.img_projection = nn.LazyLinear(1024)
-        # self.text_projection = nn.LazyLinear(1024)
+        self.latent_size = 1024
 
-        self.img_feat_means = nn.LazyLinear(1024)
-        self.img_feat_logvars = nn.LazyLinear(1024)
+        self.img_feat_means = nn.LazyLinear(self.latent_size)
+        self.img_feat_logvars = nn.LazyLinear(self.latent_size)
 
-        self.text_feat_means = nn.LazyLinear(1024)
-        self.text_feat_logvars = nn.LazyLinear(1024)
+        self.text_feat_means = nn.LazyLinear(self.latent_size)
+        self.text_feat_logvars = nn.LazyLinear(self.latent_size)
+
+        # linear projection to 512 * 7 * 7
+        self.deconv_proj = nn.LazyLinear(512 * 7 * 7)
 
     def get_img_decoder(self):
         # convolutional decoder # TODO: replace with diffusion decoder
@@ -39,13 +41,18 @@ class T2IVAE(nn.Module):
             nn.ConvTranspose2d(32, 3, 4, 2, 1), # 32, 112, 112 -> 3, 224, 224
             nn.Sigmoid() # pixel intensity should be between 0 and 1
         )
+    
+    def sample_gaussian(self, mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
 
     def forward(self, img, text_inputs):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         text = text_inputs["input_ids"].to(device) # token ids (batch_size, seq_len)
 
         img_feats = self.img_encoder(img)
-        pred_img = self.img_decoder(img_feats)
+        # pred_img = self.img_decoder(img_feats)
         # pred_text = self.t5.generate(input_ids=text, attention_mask=text_inputs["attention_mask"].to(device))
         # Modify this line to get the output from the T5 model directly
         # output_t5 = self.t5(input_ids=text, attention_mask=text_inputs["attention_mask"].to(device), decoder_input_ids=text[:, :-1])
@@ -86,17 +93,19 @@ class T2IVAE(nn.Module):
 
         img_feat_means = self.img_feat_means(flattened_img_feats)
         img_feat_logvars = self.img_feat_logvars(flattened_img_feats)
+        sampled_latent = self.sample_gaussian(img_feat_means, img_feat_logvars)
+        img_decoder_input = self.deconv_proj(sampled_latent).view(-1, 512, 7, 7)
+        pred_img = self.img_decoder(img_decoder_input)
 
         text_feat_means = self.text_feat_means(flattened_text_feats)
         text_feat_logvars = self.text_feat_logvars(flattened_text_feats)
+        text_decoder_input = self.sample_gaussian(text_feat_means, text_feat_logvars)
 
         return {
             "pred_img": pred_img,
             "pred_text": pred_text,
             "img_feats": img_feats,
             "text_feats": text_feats,
-            # "proj_img_feats": proj_img_feats,
-            # "proj_text_feats": proj_text_feats,
             "img_feat_means": img_feat_means,
             "img_feat_logvars": img_feat_logvars,
             "text_feat_means": text_feat_means,

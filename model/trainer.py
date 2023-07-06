@@ -11,7 +11,7 @@ import argparse
 def train_epoch(model, train_loader, optimizer):
     model.train()
     loss_sum = 0
-    for img, text in tqdm(train_loader):
+    for i, (img, text) in enumerate(tqdm(train_loader)):
         # print('text: ', text)
         img = img.to(device).float()
         # text_input = model.tokenizer(text, return_tensors="pt", padding=True).to(device)
@@ -30,8 +30,9 @@ def train_epoch(model, train_loader, optimizer):
 
         output = model(img, text_input)
 
-        if args.debug:
+        if args.debug and i % 50 == 0:
             visualize_data(img, text_input, output)
+
 
         loss = criterion(output, img, text_input)
         loss.backward()
@@ -45,7 +46,7 @@ def val_epoch(model, val_loader):
     model.eval()
     loss_sum = 0
     with torch.no_grad():
-        for img, text in tqdm(train_loader):
+        for i, (img, text) in enumerate(tqdm(val_loader)):
             # print('text: ', text)
             img = img.to(device).float()
             # text_input = model.tokenizer(text, return_tensors="pt", padding=True).to(device)
@@ -62,7 +63,7 @@ def val_epoch(model, val_loader):
 
             output = model(img, text_input)
 
-            if args.debug:
+            if args.debug and i % 50 == 0:
                 visualize_data(img, text_input, output)
 
             loss = criterion(output, img, text_input)
@@ -72,9 +73,10 @@ def val_epoch(model, val_loader):
 
 def kl_divergence(mu1, logvar1, mu2, logvar2):
     # kl divergence from means and logvars
-    # kl_div = (q_log_var-p_log_var + (jnp.exp(p_log_var)+(p_mean-q_mean)**2)/jnp.exp(q_log_var)-1)/2
-    kl_div = (logvar1 - logvar2 + (torch.exp(logvar1) + (mu1 - mu2)**2)/torch.exp(logvar2) - 1)/2
-    print('kl_div size: ', kl_div.shape)
+    kl_div = 0.5 * (logvar2 - logvar1 + torch.exp(logvar1 - logvar2) + (mu1 - mu2)**2 / torch.exp(logvar2) - 1)
+    # # kl_div = (q_log_var-p_log_var + (jnp.exp(p_log_var)+(p_mean-q_mean)**2)/jnp.exp(q_log_var)-1)/2
+    # kl_div = (logvar1 - logvar2 + (torch.exp(logvar1) + (mu1 - mu2)**2)/torch.exp(logvar2) - 1)/2
+    # print('kl_div size: ', kl_div.shape)
     return torch.mean(kl_div) # summing over all elements in the batch
 
 def criterion(output, img, text_input):
@@ -111,7 +113,6 @@ def criterion(output, img, text_input):
     print('img_feat_means size: ', output['img_feat_means'].size(), 'img_feat_logvars size: ', output['img_feat_logvars'].size())
     print('text_feat_means size: ', output['text_feat_means'].size(), 'text_feat_logvars size: ', output['text_feat_logvars'].size())
     # kl divergence from means and logvars
-    # kl_div = (q_log_var-p_log_var + (jnp.exp(p_log_var)+(p_mean-q_mean)**2)/jnp.exp(q_log_var)-1)/2
     img_text_kl_loss = kl_divergence(output['img_feat_means'], output['img_feat_logvars'], output['text_feat_means'], output['text_feat_logvars'])
     
     if args.debug:
@@ -121,7 +122,13 @@ def criterion(output, img, text_input):
         print('text_kl_loss: ', text_kl_loss)
         print('img_text_kl_loss: ', img_text_kl_loss)
 
-    return img_loss + text_loss  # + img_kl_loss + text_kl_loss + img_text_kl_loss
+    # return img_loss + text_loss  # + img_kl_loss + text_kl_loss + img_text_kl_loss
+    if img is None and text_input is not None:
+        return text_loss + text_kl_loss
+    elif img is not None and text_input is None:
+        return img_loss + img_kl_loss
+    else:
+        return img_loss + text_loss + 0.01 * img_kl_loss # + text_kl_loss + img_text_kl_loss
 
 def visualize_data(img_input, text_input, output=None):
     # visualize the data given the inputs or outputs
@@ -219,7 +226,10 @@ if __name__ == "__main__":
     
     val_dataset = dset.CocoCaptions(root = 'coco/images/val2014',
                             annFile = 'coco/annotations/annotations_trainval2014/annotations/captions_val2014.json',
-                            transform=transforms.PILToTensor())
+                            transform=transforms.Compose([
+                                transforms.ToTensor(),
+                                transforms.Resize((224, 224))
+                            ]))
     
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=custom_collate_fn, num_workers=args.num_workers)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=custom_collate_fn, num_workers=args.num_workers)
