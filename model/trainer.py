@@ -7,6 +7,7 @@ from model.t2ivae import T2IVAE
 from tqdm import tqdm
 from torch.nn.utils.rnn import pad_sequence
 import argparse
+import numpy as np
 
 def train_epoch(model, train_loader, optimizer):
     model.train()
@@ -25,14 +26,12 @@ def train_epoch(model, train_loader, optimizer):
         #             )["input_ids"].to(device)
         print('tokenized text shape: ', text_input["input_ids"].shape) # token ids
 
-
         optimizer.zero_grad()
 
         output = model(img, text_input)
 
         if args.debug and i % 50 == 0:
             visualize_data(img, text_input, output)
-
 
         loss = criterion(output, img, text_input)
         loss.backward()
@@ -73,31 +72,38 @@ def val_epoch(model, val_loader):
 
 def kl_divergence(mu1, logvar1, mu2, logvar2):
     # kl divergence from means and logvars
-    kl_div = 0.5 * (logvar2 - logvar1 + torch.exp(logvar1 - logvar2) + (mu1 - mu2)**2 / torch.exp(logvar2) - 1)
-    # # kl_div = (q_log_var-p_log_var + (jnp.exp(p_log_var)+(p_mean-q_mean)**2)/jnp.exp(q_log_var)-1)/2
-    # kl_div = (logvar1 - logvar2 + (torch.exp(logvar1) + (mu1 - mu2)**2)/torch.exp(logvar2) - 1)/2
-    # print('kl_div size: ', kl_div.shape)
+    # # kl_div = (q_log_var-p_log_var + (jnp.exp(p_log_var)+(p_mean-q_mean)**2)/jnp.exp(q_log_var)-1)/2 
+
+    # sanity check
+    # var1 = torch.exp(logvar1)
+    # var2 = torch.exp(logvar2)
+    # kl_div = 0.5 * (torch.log(var2 / var1) + (var1 + (mu1 - mu2)**2) / (var2) - 1)
+    # print('kl test: ', kl_div.sum())
+
+    # Calculate KL divergence
+    kl_div = 0.5 * (logvar2 - logvar1 + (torch.exp(logvar1) + (mu1 - mu2)**2) / torch.exp(logvar2) - 1) # (batch_size, hidden_dim)
+
     return torch.mean(kl_div) # summing over all elements in the batch
+
+def get_text_loss(pred, target):
+    # pred: (batch_size, seq_len, vocab_size)
+    # target: (batch_size, seq_len)
+    pred = pred.view(-1, pred.size(-1)) # (batch_size*seq_len, vocab_size)
+    target = target.view(-1) # (batch_size*seq_len)
+
+    print('pred: ', pred, 'target: ', target)
+    print('pred size: ', pred.size(), 'target size: ', target.size())
+
+    # cross entropy loss, ignoring padding
+    loss = torch.nn.functional.cross_entropy(pred, target, ignore_index=0)
+    print('text loss size: ', loss.size())
+
+    return loss
 
 def criterion(output, img, text_input):
     # applying L1 loss between output['pred_img] and img
-    print('img size: ', img.size(), 'pred_img size: ', output['pred_img'].size())
-    img_loss = torch.nn.functional.l1_loss(output['pred_img'], img)
-    print('img_loss size: ', img_loss.size())
-
-    # applying cross-entropy loss between output['pred_text'] and text_input['input_ids']
-    # padding
-    print('pred_text size: ', output['pred_text'].shape, 'input_ids size: ', text_input['input_ids'].shape)
-    # text_loss = torch.nn.functional.cross_entropy(output['pred_text'], text_input['input_ids'])
-
-    pred_text_logits_flat = output['pred_text'].view(-1, output['pred_text'].size(-1))  # shape: [8*26, 32128]
-    input_ids_flat = text_input['input_ids'].view(-1)  # shape: [8*26]
-
-    print('pred_text size: ', pred_text_logits_flat.size(), 'input_ids size: ', input_ids_flat.size())
-    # text_loss = torch.nn.functional.cross_entropy(pred_text_logits_flat, input_ids_flat) # TODO: replace with MLM objective
-    # print('text_loss size: ', text_loss.size())
-    text_loss = 0
-
+    img_loss = torch.nn.functional.l1_loss(output['pred_img'], img) # TODO: change to NLL loss
+    text_loss = get_text_loss(output['pred_text'], text_input['input_ids'])
 
     # applying unit gaussian prior to image features
     img_prior_mean = torch.zeros_like(output['img_feat_means']).to(device)
@@ -109,10 +115,7 @@ def criterion(output, img, text_input):
     text_prior_logvar = torch.zeros_like(output['text_feat_logvars']).to(device)
     text_kl_loss = kl_divergence(output['text_feat_means'], output['text_feat_logvars'], text_prior_mean, text_prior_logvar)
 
-    # applying KL divergence loss between output['img_feat_means'], output['img_feat_logvars'], output['text_feat_means'], output['text_feat_logvars']
-    print('img_feat_means size: ', output['img_feat_means'].size(), 'img_feat_logvars size: ', output['img_feat_logvars'].size())
-    print('text_feat_means size: ', output['text_feat_means'].size(), 'text_feat_logvars size: ', output['text_feat_logvars'].size())
-    # kl divergence from means and logvars
+    # kl divergence between image and text features
     img_text_kl_loss = kl_divergence(output['img_feat_means'], output['img_feat_logvars'], output['text_feat_means'], output['text_feat_logvars'])
     
     if args.debug:
@@ -128,7 +131,39 @@ def criterion(output, img, text_input):
     elif img is not None and text_input is None:
         return img_loss + img_kl_loss
     else:
-        return img_loss + text_loss + 0.01 * img_kl_loss # + text_kl_loss + img_text_kl_loss
+        return 5 * img_loss + 10 * text_loss + 0.001 * img_kl_loss + 0.001 * text_kl_loss + 0.01 * img_text_kl_loss
+
+def get_viewable_text(token_ids):
+    # decoding text from token ids, stopping at eos token
+    viewable_text = ''
+
+    # # getting index of eos token
+    # eos_token_idx = token_ids.tolist().index(1)
+
+    # checking if eos token is in token_ids
+    if 1 in token_ids:
+        eos_token_idx = token_ids.tolist().index(1)
+    else:
+        eos_token_idx = len(token_ids) - 1
+
+    # decoding text
+    viewable_text = model.tokenizer.decode(token_ids[:eos_token_idx])
+
+    return viewable_text
+
+def tensor_to_cv2(tensor):
+    # input: tensor of shape (3, 224, 224)
+    # output: numpy array of shape (224, 224, 3)
+    if tensor.requires_grad:
+        img = tensor.permute(1, 2, 0).cpu().detach().numpy()
+    else:
+        img = tensor.permute(1, 2, 0).cpu().numpy()
+    # rgb to bgr
+    img = img[:, :, ::-1].copy()
+    # resizing to 4x
+    img = cv2.resize(img, (0, 0), fx=4, fy=4)
+    return img
+
 
 def visualize_data(img_input, text_input, output=None):
     # visualize the data given the inputs or outputs
@@ -137,37 +172,35 @@ def visualize_data(img_input, text_input, output=None):
     # output: [batch_size, 3, 224, 224]
     # output: [batch_size, max_seq_len, vocab_size]
 
-    # # visualizing image and caption
-    viewable_img = img_input[0].permute(1, 2, 0).cpu().numpy()
-    # rgb to bgr
-    viewable_img = viewable_img[:, :, ::-1].copy()
-
-    # resizing to 4x
-    viewable_img = cv2.resize(viewable_img, (0, 0), fx=4, fy=4)
+    # visualizing image and caption
+    gt_img = tensor_to_cv2(img_input[0])
 
     # decoding text from token ids
-    viewable_text = model.tokenizer.decode(text_input["input_ids"][0])
-    viewable_img = cv2.putText(viewable_img, viewable_text, (0, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-    cv2.imshow('input img', viewable_img)
+    # viewable_text = model.tokenizer.decode(text_input["input_ids"][0], skip_special_tokens=True)
+    viewable_text_gt = get_viewable_text(text_input["input_ids"][0])
+
+    gt_img = cv2.putText(gt_img, 'ground truth: ' + viewable_text_gt, (0, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+    # cv2.imshow('input img', gt_img)
 
     if output is not None:
         # visualizing predicted image and caption
-        viewable_img = output['pred_img'][0].permute(1, 2, 0).cpu().detach().numpy()
-        # rgb to bgr
-        viewable_img = viewable_img[:, :, ::-1].copy()
+        img_from_img = tensor_to_cv2(output['pred_img'][0])
 
-        # resizing to 4x
-        viewable_img = cv2.resize(viewable_img, (0, 0), fx=4, fy=4)
-
-        # decoding text from token ids
         # getting predicted token ids
         pred_token_ids = torch.argmax(output['pred_text'][0], dim=1)
-        # getting rid of padding token ids
-        pred_token_ids = pred_token_ids[pred_token_ids != 0]
-        viewable_text = model.tokenizer.decode(pred_token_ids)
-        viewable_img = cv2.putText(viewable_img, viewable_text, (0, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-        cv2.imshow('pred_img', viewable_img)
+        viewable_text_pred = get_viewable_text(pred_token_ids)
 
+        img_from_img = cv2.putText(img_from_img, 'VAE: ' + viewable_text_pred, (0, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+        # cv2.imshow('pred_img_from_img', img_from_img)
+
+        img_from_text = tensor_to_cv2(output['pred_img_t2i'][0])
+        img_from_text = cv2.putText(img_from_text, 't2i prompt: ' + viewable_text_gt, (0, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+        # cv2.imshow('pred_img_t2i', img_from_text)
+        disp_img = np.concatenate((gt_img, img_from_img, img_from_text), axis=1)
+    else:
+        disp_img = gt_img
+
+    cv2.imshow('disp_img', disp_img)
     cv2.waitKey(1)
 
 def custom_collate_fn(batch):
@@ -175,8 +208,14 @@ def custom_collate_fn(batch):
 
     # getting just the first caption from each element in the batch
     # and prepending each caption with "summarize: "
-    texts = ["summarize: " + text[0] for text in texts]
-    text_input = model.tokenizer(texts[0], return_tensors="pt", padding=True) # ["input_ids"]
+    # texts = ["summarize: " + text[0] for text in texts]
+
+    texts = [text[0] for text in texts]
+
+    # text_input = model.tokenizer(texts[0], return_tensors="pt", padding=True) # ["input_ids"]
+
+    # setting max_seq_len to 128
+    text_input = model.tokenizer(texts, return_tensors="pt", padding=True, max_length=model.max_seq_len, truncation=True) # ["input_ids"]
 
     # # Define the image transformations
     # transform = transforms.Compose([
@@ -189,10 +228,19 @@ def custom_collate_fn(batch):
     # Convert images list into a PyTorch tensor
     images = torch.stack(images)
 
-    print('text_input ids: ', text_input["input_ids"])
+    print('text_input ids: ', text_input["input_ids"].shape)
     # Pad sequences for text
-    text_input["input_ids"] = pad_sequence([torch.tensor(t) for t in text_input["input_ids"]], batch_first=True)
-    print('padded text_input ids: ', text_input["input_ids"])
+    if text_input["input_ids"].size(1) < model.max_seq_len:
+        text_input["input_ids"] = torch.nn.functional.pad(text_input["input_ids"], (0, model.max_seq_len - text_input["input_ids"].shape[1]))
+    else:
+        text_input["input_ids"] = text_input["input_ids"][:, :model.max_seq_len] # truncate to max seq len
+
+    # setting attention mask
+    # text_input["attention_mask"] = torch.ones(text_input["input_ids"].shape)
+    # ignoring padding tokens
+    text_input["attention_mask"] = (text_input["input_ids"] != model.tokenizer.pad_token_id)
+
+    print('padded text_input ids: ', text_input["input_ids"].shape)
 
     # so we can access the raw text later
     # text_input["raw_text"] = torch.tensor(texts)
@@ -204,19 +252,15 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--num_workers', type=int, default=12)
-    parser.add_argument('--lr', type=float, default=1e-3)
+    parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--debug', action='store_true')
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = T2IVAE().to(device)
+
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
-    # train_loader = dset.CocoCaptions(root = 'coco/images/train2014',
-    #                         annFile = 'coco/annotations/annotations_trainval2014/annotations/captions_train2014.json',
-    #                         transform=transforms.PILToTensor(),)
-
-    # changing training transforms to include resizing
     train_dataset = dset.CocoCaptions(root = 'coco/images/train2014',
                             annFile = 'coco/annotations/annotations_trainval2014/annotations/captions_train2014.json',
                             transform=transforms.Compose([
@@ -238,6 +282,10 @@ if __name__ == "__main__":
         train_epoch(model, train_loader, optimizer)
         val_epoch(model, val_loader)
         print("Epoch: ", epoch)
+
+        # saving model
+        torch.save(model.state_dict(), 'checkpoints/t2i_vae.pt')
+        print("Saved model")
 
     print('Number of samples: ', len(train_loader))
 
