@@ -22,16 +22,17 @@ def train_epoch(model, train_loader, optimizer):
         img = img.to(device).float()
         # text_input = model.tokenizer(text, return_tensors="pt", padding=True).to(device)
         text_input = text.to(device)
-        print('tokenized text shape: ', text_input["input_ids"].shape) # token ids
 
         optimizer.zero_grad()
 
         output = model(img, text_input)
 
-        if args.debug and i % 50 == 0:
+        if args.debug and i % 500 == 0:
             disp_img = visualize_data(img, text_input, model.tokenizer, output)
             cv2.imshow('disp_img', disp_img)
             cv2.waitKey(1)
+            datetime_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+            cv2.imwrite('logs/train_' + str(epoch) + '_' + datetime_str + '.jpg', (disp_img * 255).astype(np.uint8))
 
         loss_dict = criterion(output, img, text_input)
         loss = loss_dict['loss_total']
@@ -66,15 +67,15 @@ def val_epoch(model, val_loader):
             img = img.to(device).float()
             # text_input = model.tokenizer(text, return_tensors="pt", padding=True).to(device)
             text_input = text.to(device)
-            print('tokenized text: ', text_input) # dict 
-            print('tokenized text shape: ', text_input["input_ids"].shape) # token ids
 
             output = model(img, text_input)
 
-            if args.debug and i % 50 == 0:
+            if args.debug and i % 500 == 0:
                 disp_img = visualize_data(img, text_input, model.tokenizer, output)
                 cv2.imshow('disp_img', disp_img)
                 cv2.waitKey(1)
+                datetime_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+                cv2.imwrite('logs/val_' + str(epoch) + '_' + datetime_str + '.jpg', (disp_img * 255).astype(np.uint8))
 
             loss_dict = criterion(output, img, text_input)
             loss = loss_dict['loss_total']
@@ -201,7 +202,7 @@ if __name__ == "__main__":
     wandb.config.update(args)
     
     datetime_str = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    wandb.run.name = datetime_str
+    wandb.run.name = args.config + '_' + datetime_str
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = T2IVAE().to(device)
@@ -222,11 +223,13 @@ if __name__ == "__main__":
                                 transforms.Resize((224, 224))
                             ]))
     
-    # train_loader = DataLoader(train_dataset, batch_size=config.BATCH_SIZE, shuffle=True, collate_fn=custom_collate_fn, num_workers=config.NUM_WORKERS)
-    train_loader = DataLoader(train_dataset, batch_size=config.BATCH_SIZE, shuffle=False, collate_fn=custom_collate_fn, num_workers=config.NUM_WORKERS, sampler=SubsetRandomSampler(range(13))) # for debugging
-    # val_loader = DataLoader(val_dataset, batch_size=config.BATCH_SIZE, shuffle=True, collate_fn=custom_collate_fn, num_workers=config.NUM_WORKERS)
-    val_loader = DataLoader(val_dataset, batch_size=config.BATCH_SIZE, shuffle=False, collate_fn=custom_collate_fn, num_workers=config.NUM_WORKERS, sampler=SubsetRandomSampler(range(13))) # for debugging
- 
+    train_loader = DataLoader(train_dataset, batch_size=config.BATCH_SIZE, shuffle=True, collate_fn=custom_collate_fn, num_workers=config.NUM_WORKERS)
+    # train_loader = DataLoader(train_dataset, batch_size=config.BATCH_SIZE, shuffle=False, collate_fn=custom_collate_fn, num_workers=config.NUM_WORKERS, sampler=SubsetRandomSampler(range(13))) # for debugging
+    val_loader = DataLoader(val_dataset, batch_size=config.BATCH_SIZE, shuffle=True, collate_fn=custom_collate_fn, num_workers=config.NUM_WORKERS)
+    # val_loader = DataLoader(val_dataset, batch_size=config.BATCH_SIZE, shuffle=False, collate_fn=custom_collate_fn, num_workers=config.NUM_WORKERS, sampler=SubsetRandomSampler(range(13))) # for debugging
+
+    best_val_loss = float('inf')
+
     for epoch in range(config.NUM_EPOCHS):
         train_loss = train_epoch(model, train_loader, optimizer)
         val_loss = val_epoch(model, val_loader)
@@ -234,8 +237,13 @@ if __name__ == "__main__":
         print("Epoch: ", epoch)
 
         # saving model
-        torch.save(model.state_dict(), 'checkpoints/t2i_vae' + args.config + '.pt')
-        print("Saved model")
+        torch.save(model.state_dict(), 'checkpoints/' + args.config + '_latest.pt')
+        print("Saved latest model")
+
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            torch.save(model.state_dict(), 'checkpoints/' + args.config + '_best.pt')
+            print("Saved best model")
 
     print('Number of samples: ', len(train_loader))
 

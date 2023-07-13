@@ -91,8 +91,7 @@ def visualize_data(img_input, text_input, tokenizer, output=None):
         pred_i2t_token_ids = torch.argmax(output['pred_text_i2t'][0], dim=1)
         text_from_img = get_viewable_text(pred_i2t_token_ids, tokenizer)
         
-        
-        img_from_text = cv2.putText(img_from_text, 'pred caption: ' + text_from_img, (0, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+        gt_img = cv2.putText(gt_img, 'pred caption: ' + text_from_img, (0, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
         
         # cv2.imshow('pred_img_t2i', img_from_text)
         disp_img = np.concatenate((gt_img, img_from_img, img_from_text), axis=1)
