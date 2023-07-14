@@ -8,3 +8,4 @@ coco/
 coco
 logs/
 wandb/
+cifar100/

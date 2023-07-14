@@ -43,7 +43,7 @@ def get_viewable_text(token_ids, tokenizer):
     return viewable_text
 
 
-def tensor_to_cv2(tensor):
+def tensor_to_cv2(tensor, config=None):
     # input: tensor of shape (3, 224, 224)
     # output: numpy array of shape (224, 224, 3)
     if tensor.requires_grad:
@@ -52,11 +52,17 @@ def tensor_to_cv2(tensor):
         img = tensor.permute(1, 2, 0).cpu().numpy()
     # rgb to bgr
     img = img[:, :, ::-1].copy()
-    # resizing to 4x
-    img = cv2.resize(img, (0, 0), fx=4, fy=4)
+
+    if config is None or config.DATASET == 'coco':
+        # resizing to 4x
+        img = cv2.resize(img, (0, 0), fx=4, fy=4)
+    elif config.DATASET == 'cifar100':
+        # resizing to 28x
+        img = cv2.resize(img, (0, 0), fx=28, fy=28)
+
     return img
 
-def visualize_data(img_input, text_input, tokenizer, output=None):
+def visualize_data(img_input, text_input, tokenizer, output=None, config=None):
     # visualize the data given the inputs or outputs
     # img: [batch_size, 3, 224, 224]
     # text_input: [batch_size, max_seq_len]
@@ -64,7 +70,7 @@ def visualize_data(img_input, text_input, tokenizer, output=None):
     # output: [batch_size, max_seq_len, vocab_size]
 
     # visualizing image and caption
-    gt_img = tensor_to_cv2(img_input[0])
+    gt_img = tensor_to_cv2(img_input[0], config)
 
     # decoding text from token ids
     # viewable_text = model.tokenizer.decode(text_input["input_ids"][0], skip_special_tokens=True)
@@ -75,7 +81,7 @@ def visualize_data(img_input, text_input, tokenizer, output=None):
 
     if output is not None:
         # visualizing predicted image and caption
-        img_from_img = tensor_to_cv2(output['pred_img'][0])
+        img_from_img = tensor_to_cv2(output['pred_img'][0], config)
 
         # getting predicted token ids
         pred_token_ids = torch.argmax(output['pred_text'][0], dim=1)
@@ -84,7 +90,7 @@ def visualize_data(img_input, text_input, tokenizer, output=None):
         img_from_img = cv2.putText(img_from_img, 'VAE: ' + viewable_text_pred, (0, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
         # cv2.imshow('pred_img_from_img', img_from_img)
 
-        img_from_text = tensor_to_cv2(output['pred_img_t2i'][0])
+        img_from_text = tensor_to_cv2(output['pred_img_t2i'][0], config)
         img_from_text = cv2.putText(img_from_text, 't2i prompt: ' + viewable_text_gt, (0, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
         
         print('i2t shape: ', output['pred_text_i2t'].shape)

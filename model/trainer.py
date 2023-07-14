@@ -27,8 +27,8 @@ def train_epoch(model, train_loader, optimizer):
 
         output = model(img, text_input)
 
-        if args.debug and i % 500 == 0:
-            disp_img = visualize_data(img, text_input, model.tokenizer, output)
+        if args.debug and i % 10 == 0:
+            disp_img = visualize_data(img, text_input, model.tokenizer, output, config)
             cv2.imshow('disp_img', disp_img)
             cv2.waitKey(1)
             datetime_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -53,7 +53,8 @@ def train_epoch(model, train_loader, optimizer):
             'text_loss_train': loss_dict['text_loss'].item(),
             'img_kl_loss_train': loss_dict['img_kl_loss'].item(),
             'text_kl_loss_train': loss_dict['text_kl_loss'].item(),
-            'img_text_kl_loss_train': loss_dict['img_text_kl_loss'].item()
+            'img_text_kl_loss_train': loss_dict['img_text_kl_loss'].item(),
+            'combined_kl_loss_train': loss_dict['combined_kl_loss'].item()
         })
     
     return loss_sum / len(train_loader)
@@ -70,8 +71,8 @@ def val_epoch(model, val_loader):
 
             output = model(img, text_input)
 
-            if args.debug and i % 500 == 0:
-                disp_img = visualize_data(img, text_input, model.tokenizer, output)
+            if args.debug and i % 10 == 0:
+                disp_img = visualize_data(img, text_input, model.tokenizer, output, config)
                 cv2.imshow('disp_img', disp_img)
                 cv2.waitKey(1)
                 datetime_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -87,7 +88,8 @@ def val_epoch(model, val_loader):
                 'text_loss_val': loss_dict['text_loss'].item(),
                 'img_kl_loss_val': loss_dict['img_kl_loss'].item(),
                 'text_kl_loss_val': loss_dict['text_kl_loss'].item(),
-                'img_text_kl_loss_val': loss_dict['img_text_kl_loss'].item()
+                'img_text_kl_loss_val': loss_dict['img_text_kl_loss'].item(),
+                'combined_kl_loss_val': loss_dict['combined_kl_loss'].item()
             })
     
     return loss_sum / len(val_loader)
@@ -109,7 +111,8 @@ def get_text_loss(pred, target):
 
 def criterion(output, img, text_input):
     # applying L1 loss between output['pred_img] and img
-    img_loss = torch.nn.functional.l1_loss(output['pred_img'], img) # TODO: change to NLL loss
+    # img_loss = torch.nn.functional.l1_loss(output['pred_img'], img) # TODO: change to gaussian NLL loss
+    img_loss = torch.nn.GaussianNLLLoss()(output['pred_img_means'], img, torch.exp(output['pred_img_logvars'])) # input, target, variance
     text_loss = get_text_loss(output['pred_text'], text_input['input_ids'])
 
     # applying unit gaussian prior to image features
@@ -122,15 +125,21 @@ def criterion(output, img, text_input):
     text_prior_logvar = torch.zeros_like(output['text_feat_logvars']).to(device)
     text_kl_loss = kl_divergence(output['text_feat_means'], output['text_feat_logvars'], text_prior_mean, text_prior_logvar)
 
+    # applying unit gaussian prior to combined image and text features
+    combined_prior_mean = torch.zeros_like(output['combined_embedding_means']).to(device)
+    combined_prior_logvar = torch.zeros_like(output['combined_embedding_logvars']).to(device)
+    combined_kl_loss = kl_divergence(output['combined_embedding_means'], output['combined_embedding_logvars'], combined_prior_mean, combined_prior_logvar)
+
     # kl divergence between image and text features
     img_text_kl_loss = kl_divergence(output['img_feat_means'], output['img_feat_logvars'], output['text_feat_means'], output['text_feat_logvars'])
-    
+
     if args.debug:
         print('img_loss: ', img_loss)
         print('text_loss: ', text_loss)
-        print('img_kl_loss: ', img_kl_loss)
-        print('text_kl_loss: ', text_kl_loss)
-        print('img_text_kl_loss: ', img_text_kl_loss)
+        # print('img_kl_loss: ', img_kl_loss)
+        # print('text_kl_loss: ', text_kl_loss)
+        # print('img_text_kl_loss: ', img_text_kl_loss)
+        print('combined_kl_loss: ', combined_kl_loss)        
 
     # return img_loss + text_loss  # + img_kl_loss + text_kl_loss + img_text_kl_loss
     if img is None and text_input is not None:
@@ -138,7 +147,9 @@ def criterion(output, img, text_input):
     elif img is not None and text_input is None:
         loss_total = img_loss + img_kl_loss
     else:
-        loss_total = img_loss + 10 * text_loss + 0.001 * img_kl_loss + 0.001 * text_kl_loss + 0.02 * img_text_kl_loss
+        # loss_total = img_loss + 10 * text_loss + 0.001 * img_kl_loss + 0.001 * text_kl_loss + 0.02 * img_text_kl_loss
+        # loss_total = img_loss + text_loss + 0.01 * combined_kl_loss
+        loss_total = 10 * img_loss + text_loss + 0.01 * combined_kl_loss
 
     return {
             'loss_total': loss_total,
@@ -146,7 +157,8 @@ def criterion(output, img, text_input):
             'text_loss': text_loss,
             'img_kl_loss': img_kl_loss,
             'text_kl_loss': text_kl_loss,
-            'img_text_kl_loss': img_text_kl_loss
+            'img_text_kl_loss': img_text_kl_loss,
+            'combined_kl_loss': combined_kl_loss
             }
 
 def custom_collate_fn(batch):
@@ -158,8 +170,12 @@ def custom_collate_fn(batch):
 
     # texts = [text[0] for text in texts]
 
-    # generating a random caption index from 0 to 4 for each image
-    texts = [text[random.randint(0, len(text) - 1)] for text in texts]
+    if config.DATASET == 'coco':
+        # generating a random caption index from 0 to 4 for each image
+        texts = [text[random.randint(0, len(text) - 1)] for text in texts]
+    elif config.DATASET == 'cifar100':
+        # turning the CIFAR 100 class index into a string
+        texts = [config.CIFAR100_CLASSES[text] for text in texts]
 
     # text_input = model.tokenizer(texts[0], return_tensors="pt", padding=True) # ["input_ids"]
 
@@ -176,7 +192,6 @@ def custom_collate_fn(batch):
     # Convert images list into a PyTorch tensor
     images = torch.stack(images)
 
-    print('text_input ids: ', text_input["input_ids"].shape)
     # Pad sequences for text
     if text_input["input_ids"].size(1) < config.MAX_SEQ_LEN:
         text_input["input_ids"] = torch.nn.functional.pad(text_input["input_ids"], (0, config.MAX_SEQ_LEN - text_input["input_ids"].shape[1]))
@@ -209,20 +224,42 @@ if __name__ == "__main__":
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
 
-    train_dataset = dset.CocoCaptions(root = 'coco/images/train2014',
-                            annFile = 'coco/annotations/annotations_trainval2014/annotations/captions_train2014.json',
+
+    if config.DATASET == 'coco':
+        train_dataset = dset.CocoCaptions(root = 'coco/images/train2014',
+                                annFile = 'coco/annotations/annotations_trainval2014/annotations/captions_train2014.json',
+                                transform=transforms.Compose([
+                                    transforms.ToTensor(),
+                                    transforms.Resize((224, 224)),
+                                ]))
+        
+        val_dataset = dset.CocoCaptions(root = 'coco/images/val2014',
+                                annFile = 'coco/annotations/annotations_trainval2014/annotations/captions_val2014.json',
+                                transform=transforms.Compose([
+                                    transforms.ToTensor(),
+                                    transforms.Resize((224, 224))
+                                ]))
+    elif config.DATASET == 'cifar100':
+        train_dataset = dset.CIFAR100(root='cifar100', train=True, download=True,
                             transform=transforms.Compose([
                                 transforms.ToTensor(),
-                                transforms.Resize((224, 224)),
+                                transforms.Resize((32, 32))
                             ]))
-    
-    val_dataset = dset.CocoCaptions(root = 'coco/images/val2014',
-                            annFile = 'coco/annotations/annotations_trainval2014/annotations/captions_val2014.json',
+
+        val_dataset = dset.CIFAR100(root='cifar100', train=False, download=True,
                             transform=transforms.Compose([
                                 transforms.ToTensor(),
-                                transforms.Resize((224, 224))
+                                transforms.Resize((32, 32))
                             ]))
-    
+        
+        # loading the cifar class names from a text file
+        with open('cifar100_labels.txt', 'r') as f:
+            config.CIFAR100_CLASSES = f.read().splitlines()
+            print('class names:', config.CIFAR100_CLASSES)
+    else:
+        print('Dataset not supported')
+        raise NotImplementedError
+
     train_loader = DataLoader(train_dataset, batch_size=config.BATCH_SIZE, shuffle=True, collate_fn=custom_collate_fn, num_workers=config.NUM_WORKERS)
     # train_loader = DataLoader(train_dataset, batch_size=config.BATCH_SIZE, shuffle=False, collate_fn=custom_collate_fn, num_workers=config.NUM_WORKERS, sampler=SubsetRandomSampler(range(13))) # for debugging
     val_loader = DataLoader(val_dataset, batch_size=config.BATCH_SIZE, shuffle=True, collate_fn=custom_collate_fn, num_workers=config.NUM_WORKERS)
