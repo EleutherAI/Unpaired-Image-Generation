@@ -17,6 +17,8 @@ def load_config(config_name):
 def parse_config_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-cfg', '--config', type=str, default='default')
+    parser.add_argument('--model', type=str, default='default')
     parser.add_argument('--debug', action='store_true')
+    parser.add_argument('--sample_latent', action='store_true')
     args = parser.parse_args()
     return load_config(args.config), args

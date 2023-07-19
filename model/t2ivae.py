@@ -2,17 +2,19 @@ import torch
 import torch.nn as nn
 import timm
 from transformers import T5Model, T5EncoderModel, T5Tokenizer, BertModel, BertTokenizer, T5ForConditionalGeneration
+from model.resnet_decoder import ResNet18Enc, ResNet18Dec
 import numpy as np
 from model.config_utils import parse_config_args
 
 class T2IVAE(nn.Module):
     def __init__(self):
         super(T2IVAE, self).__init__()
-        self.config, args = parse_config_args()
+        self.config, self.args = parse_config_args()
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # self.img_encoder = timm.create_model('vit_small_patch16_224', pretrained=False, num_c).to(device) # hidden_size: 768
-        self.img_encoder = timm.create_model('resnet18', pretrained=False, num_classes=0).to(device) # hidden_size: 512
+        # self.img_encoder = timm.create_model('resnet18', pretrained=False, num_classes=0).to(device) # hidden_size: 512
+        self.img_encoder = ResNet18Enc(z_dim=self.config.LATENT_DIM).to(device)
 
         self.img_encoder.global_pool = nn.Identity() # so we can get the feature map
         self.img_decoder = self.get_img_decoder().to(device)
@@ -34,7 +36,8 @@ class T2IVAE(nn.Module):
             self.img_size = 32
             # self.img_decoder_proj = nn.LazyLinear(512 * 1 * 1)
 
-        self.img_decoder_proj = nn.LazyLinear(512 * self.img_size // 32 * self.img_size // 32)
+        # self.img_decoder_proj = nn.LazyLinear(512 * self.img_size // 32 * self.img_size // 32)
+        self.img_decoder_proj = nn.LazyLinear(256 * self.img_size // 32 * self.img_size // 32)
 
         self.text_decoder_proj = nn.LazyLinear(512 * self.config.MAX_SEQ_LEN)
 
@@ -51,32 +54,34 @@ class T2IVAE(nn.Module):
     def get_img_decoder(self):
         # convolutional decoder # TODO: replace with diffusion decoder
         # if self.config.DATASET == 'coco':
-        return nn.Sequential(
-            nn.ConvTranspose2d(512, 256, 4, 2, 1), # 512, 7, 7 -> 256, 14, 14
-            nn.ReLU(),
-            nn.ConvTranspose2d(256, 128, 4, 2, 1), # 256, 14, 14 -> 128, 28, 28
-            nn.ReLU(),
-            nn.ConvTranspose2d(128, 64, 4, 2, 1), # 128, 28, 28 -> 64, 56, 56
-            nn.ReLU(),
-            nn.ConvTranspose2d(64, 32, 4, 2, 1), # 64, 56, 56 -> 32, 112, 112
-            nn.ReLU(),
-            nn.ConvTranspose2d(32, 3, 4, 2, 1), # 32, 112, 112 -> 3, 224, 224
-            nn.Sigmoid() # pixel intensity should be between 0 and 1
-        )
+        # return nn.Sequential(
+        #     nn.ConvTranspose2d(512, 256, 4, 2, 1), # 512, 7, 7 -> 256, 14, 14
+        #     nn.ReLU(),
+        #     nn.ConvTranspose2d(256, 128, 4, 2, 1), # 256, 14, 14 -> 128, 28, 28
+        #     nn.ReLU(),
+        #     nn.ConvTranspose2d(128, 64, 4, 2, 1), # 128, 28, 28 -> 64, 56, 56
+        #     nn.ReLU(),
+        #     nn.ConvTranspose2d(64, 32, 4, 2, 1), # 64, 56, 56 -> 32, 112, 112
+        #     nn.ReLU(),
+        #     nn.ConvTranspose2d(32, 3, 4, 2, 1), # 32, 112, 112 -> 3, 224, 224
+        #     nn.Sigmoid() # pixel intensity should be between 0 and 1
+        # )
+        return ResNet18Dec(num_Blocks=[2,2,2,2], z_dim=self.config.LATENT_DIM, nc=3)
 
     def get_gaussian_img_decoder(self):
-        return nn.Sequential(
-            nn.ConvTranspose2d(512, 256, 4, 2, 1), # 512, 7, 7 -> 256, 14, 14
-            nn.ReLU(),
-            nn.ConvTranspose2d(256, 128, 4, 2, 1), # 256, 14, 14 -> 128, 28, 28
-            nn.ReLU(),
-            nn.ConvTranspose2d(128, 64, 4, 2, 1), # 128, 28, 28 -> 64, 56, 56
-            nn.ReLU(),
-            nn.ConvTranspose2d(64, 32, 4, 2, 1), # 64, 56, 56 -> 32, 112, 112
-            nn.ReLU(),
-            nn.ConvTranspose2d(32, 6, 4, 2, 1), # 32, 112, 112 -> 6, 224, 224 (3 means, 3 logvars)
-            nn.Sigmoid() # pixel intensity should be between 0 and 1
-        )
+        # return nn.Sequential(
+        #     nn.ConvTranspose2d(512, 256, 4, 2, 1), # 512, 7, 7 -> 256, 14, 14
+        #     nn.ReLU(),
+        #     nn.ConvTranspose2d(256, 128, 4, 2, 1), # 256, 14, 14 -> 128, 28, 28
+        #     nn.ReLU(),
+        #     nn.ConvTranspose2d(128, 64, 4, 2, 1), # 128, 28, 28 -> 64, 56, 56
+        #     nn.ReLU(),
+        #     nn.ConvTranspose2d(64, 32, 4, 2, 1), # 64, 56, 56 -> 32, 112, 112
+        #     nn.ReLU(),
+        #     nn.ConvTranspose2d(32, 6, 4, 2, 1), # 32, 112, 112 -> 6, 224, 224 (3 means, 3 logvars)
+        #     nn.Sigmoid() # pixel intensity should be between 0 and 1
+        # )
+        return ResNet18Dec(num_Blocks=[2,2,2,2], z_dim=self.config.LATENT_DIM, nc=6)
 
     def get_combined_embedding(self, img_feats, text_feats):
         print(img_feats.shape, text_feats.shape)
@@ -123,17 +128,26 @@ class T2IVAE(nn.Module):
         sampled_text_latent = self.sample_gaussian(text_feat_means, text_feat_logvars)
 
         # combined embeddings
-        # combined_embedding_means, combined_embedding_logvars  = self.get_combined_embedding(sampled_img_latent, sampled_text_latent) # TODO: check if this is correct, maybe should be deterministic (means?)
-        combined_embedding_means, combined_embedding_logvars  = self.get_combined_embedding(img_feat_means, text_feat_means)
-        combined_embedding = self.sample_gaussian(combined_embedding_means, combined_embedding_logvars) 
+        if self.args.sample_latent:
+            # sampling from unit gaussian
+            combined_embedding = torch.randn_like(sampled_img_latent)
+            combined_embedding_means = torch.zeros_like(sampled_img_latent)
+            combined_embedding_logvars = torch.zeros_like(sampled_img_latent)
+        else:
+            # combined_embedding_means, combined_embedding_logvars  = self.get_combined_embedding(sampled_img_latent, sampled_text_latent) # TODO: check if this is correct, maybe should be deterministic (means?)
+            combined_embedding_means, combined_embedding_logvars  = self.get_combined_embedding(img_feat_means, text_feat_means) # TODO: mask or dropout?
+            # combined_embedding_logvars -= 4 # lowering logvars by subtracting a constant (e.g. 3-5ish)
+            combined_embedding = self.sample_gaussian(combined_embedding_means, combined_embedding_logvars) 
         
         # img decoder
         # img_decoder_input = self.img_decoder_proj(sampled_img_latent).view(-1, 512, self.img_size // 32, self.img_size // 32)
-        img_decoder_input = self.img_decoder_proj(combined_embedding).view(-1, 512, self.img_size // 32, self.img_size // 32)
-        pred_img = self.img_decoder(img_decoder_input)
+        # img_decoder_input = self.img_decoder_proj(combined_embedding).view(-1, 512, self.img_size // 32, self.img_size // 32)
+        img_decoder_input = self.img_decoder_proj(combined_embedding).view(-1, 256, self.img_size // 32, self.img_size // 32)
         pred_img_gaussian = self.gaussian_img_decoder(img_decoder_input)
         pred_img_means = pred_img_gaussian[:, :3, :, :]
         pred_img_logvars = pred_img_gaussian[:, 3:, :, :]
+        # pred_img = self.img_decoder(img_decoder_input)
+        pred_img = self.sample_gaussian(pred_img_means, pred_img_logvars)
 
         print('pred_img_means', pred_img_means.shape)
         print('pred_img_logvars', pred_img_logvars.shape)

@@ -149,7 +149,7 @@ def criterion(output, img, text_input):
     else:
         # loss_total = img_loss + 10 * text_loss + 0.001 * img_kl_loss + 0.001 * text_kl_loss + 0.02 * img_text_kl_loss
         # loss_total = img_loss + text_loss + 0.01 * combined_kl_loss
-        loss_total = 10 * img_loss + text_loss + 0.01 * combined_kl_loss
+        loss_total = img_loss + 0.05 * text_loss + 0.01 * combined_kl_loss
 
     return {
             'loss_total': loss_total,
