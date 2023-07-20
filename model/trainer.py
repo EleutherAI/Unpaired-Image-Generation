@@ -52,16 +52,16 @@ def train_epoch(model, train_loader, optimizer):
         # print('text_kl_loss: ', text_kl_loss)
         # print('img_text_kl_loss: ', img_text_kl_loss)
 
-        wandb.log({
-            'loss_train': loss.item(),
-            'img_loss_train': loss_dict['img_loss'].item(),
-            'text_loss_train': loss_dict['text_loss'].item(),
-            # 'img_kl_loss_train': loss_dict['img_kl_loss'].item(),
-            # 'text_kl_loss_train': loss_dict['text_kl_loss'].item(),
-            # 'img_text_kl_loss_train': loss_dict['img_text_kl_loss'].item(),
-            'combined_kl_loss_train': loss_dict['combined_kl_loss'].item()
-        })
-    
+        # wandb.log({
+        #     'loss_train': loss.item(),
+        #     'img_loss_train': loss_dict['img_loss'].item(),
+        #     'text_loss_train': loss_dict['text_loss'].item(),
+        #     'combined_kl_loss_train': loss_dict['combined_kl_loss'].item()
+        # })
+
+        for key in loss_dict:
+            wandb.log({key + '_train': loss_dict[key].item()})
+
     return loss_sum / len(train_loader)
 
 def val_epoch(model, val_loader):
@@ -92,15 +92,18 @@ def val_epoch(model, val_loader):
             loss = loss_dict['loss_total']
             loss_sum += loss.item()
 
-            wandb.log({
-                'loss_val': loss.item(),
-                'img_loss_val': loss_dict['img_loss'].item(),
-                'text_loss_val': loss_dict['text_loss'].item(),
-                # 'img_kl_loss_val': loss_dict['img_kl_loss'].item(),
-                # 'text_kl_loss_val': loss_dict['text_kl_loss'].item(),
-                # 'img_text_kl_loss_val': loss_dict['img_text_kl_loss'].item(),
-                'combined_kl_loss_val': loss_dict['combined_kl_loss'].item()
-            })
+            # wandb.log({
+            #     'loss_val': loss.item(),
+            #     'img_loss_val': loss_dict['img_loss'].item(),
+            #     'text_loss_val': loss_dict['text_loss'].item(),
+            #     # 'img_kl_loss_val': loss_dict['img_kl_loss'].item(),
+            #     # 'text_kl_loss_val': loss_dict['text_kl_loss'].item(),
+            #     # 'img_text_kl_loss_val': loss_dict['img_text_kl_loss'].item(),
+            #     'combined_kl_loss_val': loss_dict['combined_kl_loss'].item()
+            # })
+
+            for key in loss_dict:
+                wandb.log({key + '_val': loss_dict[key].item()})
     
     return loss_sum / len(val_loader)
 
@@ -154,22 +157,32 @@ def criterion(output, img, text_input, mask_img, mask_text):
     # return img_loss + text_loss  # + img_kl_loss + text_kl_loss + img_text_kl_loss
     if mask_img:
         loss_total = text_loss + combined_kl_loss
+        return {
+            'loss_total': loss_total,
+            'text_only_loss_total': loss_total,
+            't2i_loss': text_loss,
+            'text_only_combined_kl_loss': combined_kl_loss
+        }
     elif mask_text:
         loss_total = img_loss + combined_kl_loss
+        return {
+            'loss_total': loss_total,
+            'img_only_loss_total': loss_total,
+            'i2t_loss': img_loss,
+            'img_only_combined_kl_loss': combined_kl_loss
+        }
     else:
         # loss_total = img_loss + 10 * text_loss + 0.001 * img_kl_loss + 0.001 * text_kl_loss + 0.02 * img_text_kl_loss
         # loss_total = img_loss + text_loss + 0.01 * combined_kl_loss
         loss_total = img_loss + 0.05 * text_loss + 0.01 * combined_kl_loss
 
-    return {
-            'loss_total': loss_total,
-            'img_loss': img_loss,
-            'text_loss': text_loss,
-            # 'img_kl_loss': img_kl_loss,
-            # 'text_kl_loss': text_kl_loss,
-            # 'img_text_kl_loss': img_text_kl_loss,
-            'combined_kl_loss': combined_kl_loss
-            }
+        return {
+                'loss_total': loss_total,
+                'combined_loss_total': loss_total,
+                'combined_img_loss': img_loss,
+                'combined_text_loss': text_loss,
+                'combined_kl_loss': combined_kl_loss
+                }
 
 def custom_collate_fn(batch):
     images, texts = zip(*batch)

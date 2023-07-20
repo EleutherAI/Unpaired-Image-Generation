@@ -293,14 +293,14 @@ class ResNetDecoder(nn.Module):
 
     def forward(self, x):
         print('input shape', x.shape)
-        # x = self.linear(x)
+        x = self.linear(x)
         print('x after linear', x.shape)
 
         # NOTE: replaced this by Linear(in_channels, 514 * 4 * 4)
         # x = F.interpolate(x, scale_factor=4)
 
-        # x = x.view(x.size(0), 512 * self.expansion, 4, 4)
-        # print('x after view', x.shape)
+        x = x.view(x.size(0), 512 * self.expansion, 4, 4)
+        print('x after view', x.shape)
         x = self.upscale1(x)
         print('x after upscale1', x.shape)
 
@@ -326,7 +326,7 @@ def get_resnet18_encoder(first_conv, maxpool1):
 def get_resnet18_decoder(latent_dim, input_height, first_conv, maxpool1, nc):
     return ResNetDecoder(DecoderBlock, [2, 2, 2, 2], latent_dim, input_height, first_conv, maxpool1, nc)
 
-def get_resnet50_encoder(first_conv, maxpool1, nc):
+def get_resnet50_encoder(first_conv, maxpool1):
     return ResNetEncoder(EncoderBottleneck, [3, 4, 6, 3], first_conv, maxpool1)
 
 def get_resnet50_decoder(latent_dim, input_height, first_conv, maxpool1, nc):

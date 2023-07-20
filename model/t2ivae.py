@@ -3,7 +3,7 @@ import torch.nn as nn
 import timm
 from transformers import T5Model, T5EncoderModel, T5Tokenizer, BertModel, BertTokenizer, T5ForConditionalGeneration
 from model.resnet_decoder import ResNet18Enc, ResNet18Dec
-from model.pl_resnet_ae import get_resnet18_encoder, get_resnet18_decoder
+from model.pl_resnet_ae import get_resnet18_encoder, get_resnet18_decoder, get_resnet50_encoder, get_resnet50_decoder
 import numpy as np
 from model.config_utils import parse_config_args
 
@@ -20,11 +20,13 @@ class T2IVAE(nn.Module):
         # print('img_encoder1: ', self.img_encoder1)
         # self.img_encoder = ResNet18Enc(z_dim=self.config.LATENT_DIM).to(device)
         self.img_encoder = get_resnet18_encoder(first_conv=False, maxpool1=False).to(device)
+        # self.img_encoder = get_resnet50_encoder(first_conv=False, maxpool1=False).to(device)
 
         print('img_encoder2: ', self.img_encoder)
         # self.img_decoder = self.get_img_decoder().to(device)
         # self.gaussian_img_decoder = self.get_gaussian_img_decoder().to(device)
         self.gaussian_img_decoder = get_resnet18_decoder(latent_dim=self.config.LATENT_DIM, input_height=self.img_size, first_conv=False, maxpool1=False, nc=6).to(device)
+        # self.gaussian_img_decoder = get_resnet50_decoder(latent_dim=self.config.LATENT_DIM, input_height=self.img_size, first_conv=False, maxpool1=False, nc=6).to(device)
         t5_size = 'small'
         self.t5 = T5ForConditionalGeneration.from_pretrained('t5-' + t5_size).to(device)
         self.tokenizer = T5Tokenizer.from_pretrained('t5-' + t5_size)
@@ -37,14 +39,10 @@ class T2IVAE(nn.Module):
 
         if self.config.DATASET == 'coco':
             self.img_size = 224
-            # self.img_decoder_proj = nn.LazyLinear(512 * 7 * 7)
         elif self.config.DATASET == 'cifar100':
             self.img_size = 32
-            # self.img_decoder_proj = nn.LazyLinear(512 * 1 * 1)
 
-        self.img_decoder_proj = nn.LazyLinear(512 * self.img_size // 32 * self.img_size // 32)
-        # self.img_decoder_proj = nn.LazyLinear(256 * self.img_size // 32 * self.img_size // 32)
-
+        # self.img_decoder_proj = nn.LazyLinear(512 * self.img_size // 32 * self.img_size // 32)
         self.text_decoder_proj = nn.LazyLinear(512 * self.config.MAX_SEQ_LEN)
 
         self.combined_mlp = nn.Sequential(
@@ -119,8 +117,9 @@ class T2IVAE(nn.Module):
             combined_embedding = self.sample_gaussian(combined_embedding_means, combined_embedding_logvars) 
         
         # img decoder
-        img_decoder_input = self.img_decoder_proj(combined_embedding).view(-1, 512, self.img_size // 32, self.img_size // 32)
-        pred_img_gaussian = self.gaussian_img_decoder(img_decoder_input)
+        # img_decoder_input = self.img_decoder_proj(combined_embedding).view(-1, 512, self.img_size // 32, self.img_size // 32)
+        # pred_img_gaussian = self.gaussian_img_decoder(img_decoder_input)
+        pred_img_gaussian = self.gaussian_img_decoder(combined_embedding)
         pred_img_means = pred_img_gaussian[:, :3, :, :]
         pred_img_logvars = pred_img_gaussian[:, 3:, :, :] # lowering logvars by subtracting a constant (e.g. 3-5ish)
         pred_img = self.sample_gaussian(pred_img_means, pred_img_logvars - 3)
@@ -154,7 +153,7 @@ class T2IVAE(nn.Module):
         pred_text_i2t = pred_text
 
         print('img_feats', img_feats.shape)
-        print('img_decoder_input: ', img_decoder_input.shape)
+        # print('img_decoder_input: ', img_decoder_input.shape)
         print('text_decoder_input: ', text_decoder_input.shape)
         print('text_feats: ', text_feats.shape)
         print('combined_embedding: ', combined_embedding.shape)
