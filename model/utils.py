@@ -1,6 +1,7 @@
 import torch
 import torchvision.datasets as dset
 from torch.utils.data import DataLoader
+from torch.utils.data import Dataset
 import torchvision.transforms as transforms
 import cv2
 from model.t2ivae import T2IVAE
@@ -8,6 +9,8 @@ from tqdm import tqdm
 import argparse
 import numpy as np
 from model.utils import *
+import random
+import copy
 
 def kl_divergence(mu1, logvar1, mu2, logvar2):
     # kl divergence from means and logvars
@@ -62,7 +65,7 @@ def tensor_to_cv2(tensor, config=None):
 
     return img
 
-def visualize_data(img_input, text_input, tokenizer, output=None, config=None):
+def visualize_data(img_input, text_input, tokenizer, output=None, config=None, mask_img=False, mask_text=False):
     # visualize the data given the inputs or outputs
     # img: [batch_size, 3, 224, 224]
     # text_input: [batch_size, max_seq_len]
@@ -70,11 +73,17 @@ def visualize_data(img_input, text_input, tokenizer, output=None, config=None):
     # output: [batch_size, max_seq_len, vocab_size]
 
     # visualizing image and caption
-    gt_img = tensor_to_cv2(img_input[0], config)
+    if mask_img:
+        gt_img = tensor_to_cv2(torch.zeros_like(img_input[0]), config)
+    else:
+        gt_img = tensor_to_cv2(img_input[0], config)
 
     # decoding text from token ids
     # viewable_text = model.tokenizer.decode(text_input["input_ids"][0], skip_special_tokens=True)
-    viewable_text_gt = get_viewable_text(text_input["input_ids"][0], tokenizer)
+    if mask_text:
+        viewable_text_gt = ''
+    else:
+        viewable_text_gt = get_viewable_text(text_input["input_ids"][0], tokenizer)
 
     gt_img = cv2.putText(gt_img, 'ground truth: ' + viewable_text_gt, (0, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
     # cv2.imshow('input img', gt_img)
@@ -105,3 +114,47 @@ def visualize_data(img_input, text_input, tokenizer, output=None, config=None):
         disp_img = gt_img
 
     return disp_img
+
+class MaskedDataset(Dataset):
+    def __init__(self, dataset_class, model, *args, **kwargs):
+        self.dataset = dataset_class(*args, **kwargs)
+        self.model = model
+
+    def __getitem__(self, index):
+        # Make a deep copy of the image and caption
+        image, caption = copy.deepcopy(self.dataset[index])
+
+        # Apply the masking
+        mask_img = random.randint(0, 1)
+        mask_text = random.randint(0, 1)
+        if mask_img:
+            image = torch.zeros_like(image)
+        if mask_text:
+            print('caption: ', caption)
+            # caption["input_ids"] = torch.full_like(caption["input_ids"], self.model.tokenizer.eos_token_id)
+            caption = self.model.tokenizer.eos_token_id
+
+        
+        return image, caption
+
+    def __len__(self):
+        return len(self.dataset)
+    
+def get_masks():
+    # 3 possible states
+    mask_state = random.randint(0, 2)
+
+    if mask_state == 0:
+        # mask image
+        mask_img = True
+        mask_text = False
+    elif mask_state == 1:
+        # mask text
+        mask_img = False
+        mask_text = True
+    else:
+        # mask neither
+        mask_img = False
+        mask_text = False
+
+    return mask_img, mask_text

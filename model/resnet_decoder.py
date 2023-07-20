@@ -3,6 +3,7 @@
 import torch
 from torch import nn, optim
 import torch.nn.functional as F
+from model.config_utils import parse_config_args
 
 class ResizeConv2d(nn.Module):
 
@@ -78,14 +79,15 @@ class ResNet18Enc(nn.Module):
 
     def __init__(self, num_Blocks=[2,2,2,2], z_dim=10, nc=3):
         super().__init__()
-        self.in_planes = 32
+        self.config, self.args = parse_config_args()
+        self.in_planes = 64
         self.z_dim = z_dim
-        self.conv1 = nn.Conv2d(nc, 32, kernel_size=3, stride=2, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(32)
-        self.layer1 = self._make_layer(BasicBlockEnc, 32, num_Blocks[0], stride=1)
-        self.layer2 = self._make_layer(BasicBlockEnc, 64, num_Blocks[1], stride=2)
-        self.layer3 = self._make_layer(BasicBlockEnc, 128, num_Blocks[2], stride=2)
-        self.layer4 = self._make_layer(BasicBlockEnc, 256, num_Blocks[3], stride=2)
+        self.conv1 = nn.Conv2d(nc, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.layer1 = self._make_layer(BasicBlockEnc, 64, num_Blocks[0], stride=1)
+        self.layer2 = self._make_layer(BasicBlockEnc, 128, num_Blocks[1], stride=2)
+        self.layer3 = self._make_layer(BasicBlockEnc, 256, num_Blocks[2], stride=2)
+        self.layer4 = self._make_layer(BasicBlockEnc, 512, num_Blocks[3], stride=2)
         # self.linear = nn.Linear(512, 2 * z_dim)
 
     def _make_layer(self, BasicBlockEnc, planes, num_Blocks, stride):
@@ -121,15 +123,16 @@ class ResNet18Dec(nn.Module):
 
     def __init__(self, num_Blocks=[2,2,2,2], z_dim=10, nc=3):
         super().__init__()
-        self.in_planes = 256
+        self.config, self.args = parse_config_args()
 
+        self.in_planes = 512
         # self.linear = nn.Linear(512, 256)
 
-        self.layer4 = self._make_layer(BasicBlockDec, 128, num_Blocks[3], stride=2)
-        self.layer3 = self._make_layer(BasicBlockDec, 64, num_Blocks[2], stride=2)
-        self.layer2 = self._make_layer(BasicBlockDec, 32, num_Blocks[1], stride=2)
-        self.layer1 = self._make_layer(BasicBlockDec, 32, num_Blocks[0], stride=1)
-        self.conv1 = ResizeConv2d(32, nc, kernel_size=3, scale_factor=2)
+        self.layer4 = self._make_layer(BasicBlockDec, 256, num_Blocks[3], stride=2)
+        self.layer3 = self._make_layer(BasicBlockDec, 128, num_Blocks[2], stride=2)
+        self.layer2 = self._make_layer(BasicBlockDec, 64, num_Blocks[1], stride=2)
+        self.layer1 = self._make_layer(BasicBlockDec, 64, num_Blocks[0], stride=1)
+        self.conv1 = ResizeConv2d(64, nc, kernel_size=3, scale_factor=2)
         self.nc = nc
 
     def _make_layer(self, BasicBlockDec, planes, num_Blocks, stride):
@@ -144,7 +147,7 @@ class ResNet18Dec(nn.Module):
         print('x input shape', x.shape)
         # x = self.linear(x)
         # print('x after linear', x.shape)
-        x = x.view(x.size(0), 256, 1, 1) # (batch_size, 256, 1, 1)
+        x = x.view(x.size(0), 512, 1, 1) # (batch_size, 512, 1, 1)
         print('x after view', x.shape)
         x = F.interpolate(x, scale_factor=2)
         print('x after interpolate', x.shape)
