@@ -17,16 +17,12 @@ class T2IVAE(nn.Module):
         # self.img_encoder = timm.create_model('vit_small_patch16_224', pretrained=False, num_c).to(device) # hidden_size: 768
         # self.img_encoder1 = timm.create_model('resnet18', pretrained=False, num_classes=0).to(device) # hidden_size: 512
         # self.img_encoder.global_pool = nn.Identity() # so we can get the feature map
-        # print('img_encoder1: ', self.img_encoder1)
         # self.img_encoder = ResNet18Enc(z_dim=self.config.LATENT_DIM).to(device)
         self.img_encoder = get_resnet18_encoder(first_conv=False, maxpool1=False).to(device)
         # self.img_encoder = get_resnet50_encoder(first_conv=False, maxpool1=False).to(device)
-
-        print('img_encoder2: ', self.img_encoder)
-        # self.img_decoder = self.get_img_decoder().to(device)
-        # self.gaussian_img_decoder = self.get_gaussian_img_decoder().to(device)
         self.gaussian_img_decoder = get_resnet18_decoder(latent_dim=self.config.LATENT_DIM, input_height=self.img_size, first_conv=False, maxpool1=False, nc=6).to(device)
         # self.gaussian_img_decoder = get_resnet50_decoder(latent_dim=self.config.LATENT_DIM, input_height=self.img_size, first_conv=False, maxpool1=False, nc=6).to(device)
+        
         t5_size = 'small'
         self.t5 = T5ForConditionalGeneration.from_pretrained('t5-' + t5_size).to(device)
         self.tokenizer = T5Tokenizer.from_pretrained('t5-' + t5_size)
@@ -56,7 +52,7 @@ class T2IVAE(nn.Module):
         self.combined_logvar_proj = nn.LazyLinear(self.config.LATENT_DIM)
 
     def get_combined_embedding(self, img_feats, text_feats):
-        print(img_feats.shape, text_feats.shape)
+        # print(img_feats.shape, text_feats.shape)
         concat_embeddings = torch.cat((img_feats, text_feats), dim=1)
         combined_embeddings = self.combined_mlp(concat_embeddings)
         combined_means = self.combined_mean_proj(combined_embeddings)
@@ -113,7 +109,7 @@ class T2IVAE(nn.Module):
                 combined_embedding_means, combined_embedding_logvars  = self.get_combined_embedding(img_feat_means, torch.zeros_like(text_feat_means))
             else:
                 combined_embedding_means, combined_embedding_logvars  = self.get_combined_embedding(img_feat_means, text_feat_means) # TODO: mask or dropout?
-            combined_embedding_logvars -= 4 # lowering logvars by subtracting a constant (e.g. 3-5ish)
+            # combined_embedding_logvars -= 4 # lowering logvars by subtracting a constant (e.g. 3-5ish)
             combined_embedding = self.sample_gaussian(combined_embedding_means, combined_embedding_logvars) 
         
         # img decoder
@@ -122,11 +118,8 @@ class T2IVAE(nn.Module):
         pred_img_gaussian = self.gaussian_img_decoder(combined_embedding)
         pred_img_means = pred_img_gaussian[:, :3, :, :]
         pred_img_logvars = pred_img_gaussian[:, 3:, :, :] # lowering logvars by subtracting a constant (e.g. 3-5ish)
-        pred_img = self.sample_gaussian(pred_img_means, pred_img_logvars - 3)
+        pred_img = self.sample_gaussian(pred_img_means, pred_img_logvars)
         # pred_img = pred_img_means
-
-        print('pred_img_means', pred_img_means.shape)
-        print('pred_img_logvars', pred_img_logvars.shape)
         
         # text decoder
         # text_decoder_input = self.text_decoder_proj(sampled_text_latent).view(-1, self.config.MAX_SEQ_LEN, 512)
@@ -151,16 +144,6 @@ class T2IVAE(nn.Module):
         # pred_text_i2t = self.t5.lm_head(i2t_decoder_out.last_hidden_state) # (batch_size, seq_len, vocab_size)
         # pred_text_i2t = pred_text_i2t.view(-1, text.shape[1], self.t5.config.vocab_size)
         pred_text_i2t = pred_text
-
-        print('img_feats', img_feats.shape)
-        # print('img_decoder_input: ', img_decoder_input.shape)
-        print('text_decoder_input: ', text_decoder_input.shape)
-        print('text_feats: ', text_feats.shape)
-        print('combined_embedding: ', combined_embedding.shape)
-        print('pred_img: ', pred_img.shape)
-        print('pred_text: ', pred_text.shape)
-        print('pred_img_t2i: ', pred_img_t2i.shape)
-        print('pred_text_i2t: ', pred_text_i2t.shape)
 
         return {
             "pred_img": pred_img,
@@ -190,13 +173,15 @@ if __name__ == "__main__":
     print("pred_img", output["pred_img"].shape)
     print("pred_text", output["pred_text"].shape)
     print("img_feats", output["img_feats"].shape)
-    print("text_feats: ", output["text_feats"].shape)
-    # print("proj_img_feats: ", output["proj_img_feats"].shape)
-    # print("proj_text_feats: ", output["proj_text_feats"].shape)
-    print("img_feat_means: ", output["img_feat_means"].shape)
-    print("img_feat_logvars: ", output["img_feat_logvars"].shape)
-    print("text_feat_means: ", output["text_feat_means"].shape)
-    print("text_feat_logvars: ", output["text_feat_logvars"].shape)
+    print("text_feats", output["text_feats"].shape)
+    print("img_feat_means", output["img_feat_means"].shape)
+    # print("img_feat_logvars", output["img_feat_logvars"].shape)
+    print("text_feat_means", output["text_feat_means"].shape)
+    # print("text_feat_logvars", output["text_feat_logvars"].shape)
+    print("combined_embedding_means", output["combined_embedding_means"].shape)
+    print("combined_embedding_logvars", output["combined_embedding_logvars"].shape)
+    print("pred_img_t2i", output["pred_img_t2i"].shape)
+    print("pred_text_i2t", output["pred_text_i2t"].shape)
 
     decoded_text = model.tokenizer.batch_decode(output["pred_text"], skip_special_tokens=True)
     print("decoded pred_text: ", decoded_text)

@@ -66,52 +66,43 @@ def tensor_to_cv2(tensor, config=None):
     return img
 
 def visualize_data(img_input, text_input, tokenizer, output=None, config=None, mask_img=False, mask_text=False):
-    # visualize the data given the inputs or outputs
-    # img: [batch_size, 3, 224, 224]
-    # text_input: [batch_size, max_seq_len]
-    # output: [batch_size, 3, 224, 224]
-    # output: [batch_size, max_seq_len, vocab_size]
+    gt_img = tensor_to_cv2(img_input[0], config)
+    zero_img = tensor_to_cv2(torch.zeros_like(img_input[0]), config)
 
-    # visualizing image and caption
-    if mask_img:
-        gt_img = tensor_to_cv2(torch.zeros_like(img_input[0]), config)
-    else:
-        gt_img = tensor_to_cv2(img_input[0], config)
-
-    # decoding text from token ids
-    # viewable_text = model.tokenizer.decode(text_input["input_ids"][0], skip_special_tokens=True)
-    if mask_text:
-        viewable_text_gt = ''
-    else:
-        viewable_text_gt = get_viewable_text(text_input["input_ids"][0], tokenizer)
-
-    gt_img = cv2.putText(gt_img, 'ground truth: ' + viewable_text_gt, (0, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-    # cv2.imshow('input img', gt_img)
-
+    text_gt = get_viewable_text(text_input["input_ids"][0], tokenizer)
+    empty_text = ''
+    
     if output is not None:
         # visualizing predicted image and caption
-        img_from_img = tensor_to_cv2(output['pred_img'][0], config)
+        # img_output = tensor_to_cv2(output['pred_img'][0], config)
+        img_output = tensor_to_cv2(output['pred_img_means'][0], config)
 
-        # getting predicted token ids
         pred_token_ids = torch.argmax(output['pred_text'][0], dim=1)
-        viewable_text_pred = get_viewable_text(pred_token_ids, tokenizer)
+        text_output = get_viewable_text(pred_token_ids, tokenizer)
 
-        img_from_img = cv2.putText(img_from_img, 'VAE: ' + viewable_text_pred, (0, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-        # cv2.imshow('pred_img_from_img', img_from_img)
+        if not mask_img and not mask_text: # vae
+            disp_gt_img = cv2.putText(gt_img, 'ground truth: ' + text_gt, (0, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 1), 2)
+            disp_pred_img = cv2.putText(img_output, 'vae output: ' + text_output, (0, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 1), 2)
+        
+        elif mask_img and not mask_text: # t2i
+            disp_gt_img = cv2.putText(zero_img, 'ground truth: ' + text_gt, (0, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 1), 2)
+            disp_pred_img = cv2.putText(img_output, 'pred image from text (' + text_gt + ')', (0, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 1), 2)
 
-        img_from_text = tensor_to_cv2(output['pred_img_t2i'][0], config)
-        img_from_text = cv2.putText(img_from_text, 't2i prompt: ' + viewable_text_gt, (0, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-        
-        print('i2t shape: ', output['pred_text_i2t'].shape)
-        pred_i2t_token_ids = torch.argmax(output['pred_text_i2t'][0], dim=1)
-        text_from_img = get_viewable_text(pred_i2t_token_ids, tokenizer)
-        
-        gt_img = cv2.putText(gt_img, 'pred caption: ' + text_from_img, (0, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-        
-        # cv2.imshow('pred_img_t2i', img_from_text)
-        disp_img = np.concatenate((gt_img, img_from_img, img_from_text), axis=1)
+        elif mask_text and not mask_img: # i2t
+            disp_gt_img = cv2.putText(gt_img, 'ground truth: ' + text_gt, (0, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 1), 2)
+            disp_pred_img = cv2.putText(zero_img, 'pred text from image: ' + text_output, (0, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 1), 2)
+
+        else:
+            raise ValueError('invalid mask_img and mask_text combination')
+
+        # disp_img = np.concatenate((gt_img, img_from_img, img_from_text), axis=1)
+        disp_img = np.concatenate((disp_gt_img, disp_pred_img), axis=1)
+
     else:
-        disp_img = gt_img
+        # visualizing only ground truth image and caption
+        disp_gt_img = cv2.putText(gt_img, 'ground truth: ' + text_gt, (0, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+
+        disp_img = disp_gt_img
 
     return disp_img
 

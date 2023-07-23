@@ -213,25 +213,17 @@ class ResNetEncoder(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        print('input shape', x.shape)
         x = self.conv1(x)
-        print('x after conv1', x.shape)
         x = self.bn1(x)
         x = self.relu(x)
         x = self.maxpool(x)
-        print('x after maxpool', x.shape)
 
         x = self.layer1(x)
-        print('x after layer1', x.shape)
         x = self.layer2(x)
-        print('x after layer2', x.shape)
         x = self.layer3(x)
-        print('x after layer3', x.shape)
         x = self.layer4(x)
-        print('x after layer4', x.shape)
 
         x = self.avgpool(x)
-        print('x after avgpool', x.shape)
         # x = torch.flatten(x, 1)
         # print('x after flatten', x.shape)
 
@@ -292,31 +284,20 @@ class ResNetDecoder(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        print('input shape', x.shape)
         x = self.linear(x)
-        print('x after linear', x.shape)
 
         # NOTE: replaced this by Linear(in_channels, 514 * 4 * 4)
         # x = F.interpolate(x, scale_factor=4)
 
         x = x.view(x.size(0), 512 * self.expansion, 4, 4)
-        print('x after view', x.shape)
         x = self.upscale1(x)
-        print('x after upscale1', x.shape)
 
         x = self.layer1(x)
-        print('x after layer1', x.shape)
         x = self.layer2(x)
-        print('x after layer2', x.shape)
         x = self.layer3(x)
-        print('x after layer3', x.shape)
         x = self.layer4(x)
-        print('x after layer4', x.shape)
         x = self.upscale(x)
-        print('x after upscale', x.shape)
-
         x = self.conv1(x)
-        print('x after conv1', x.shape)
 
         return x
 

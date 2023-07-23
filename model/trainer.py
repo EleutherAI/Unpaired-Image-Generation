@@ -13,12 +13,18 @@ from model.config_utils import parse_config_args
 import random
 import wandb
 import datetime
+import os
 
 def train_epoch(model, train_loader, optimizer):
     model.train()
     loss_sum = 0
+    avg_loss_dict = {}
     for i, (img, text) in enumerate(tqdm(train_loader)):
-        if config.MASKING:
+        if hasattr(config, 'WARMUP_EPOCHS') and epoch < config.WARMUP_EPOCHS:
+            print('in warmup phase')
+            mask_img, mask_text = False, False
+        elif config.MASKING:
+            print('in masking phase')
             mask_img, mask_text = get_masks() 
         else:
             mask_img, mask_text = False, False
@@ -26,7 +32,7 @@ def train_epoch(model, train_loader, optimizer):
         # print('text: ', text)
         img = img.to(device).float()
         # text_input = model.tokenizer(text, return_tensors="pt", padding=True).to(device)
-        text_input = text.to(device)
+        text_input = text.to(device)          
 
         optimizer.zero_grad()
 
@@ -37,7 +43,7 @@ def train_epoch(model, train_loader, optimizer):
             cv2.imshow('disp_img', disp_img)
             cv2.waitKey(1)
             datetime_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-            cv2.imwrite('logs/train_' + str(epoch) + '_' + datetime_str + '.jpg', (disp_img * 255).astype(np.uint8))
+            # cv2.imwrite('logs/' + args.config + '/train_' + str(epoch) + '_' + datetime_str + '.jpg', (disp_img * 255).astype(np.uint8))
 
         loss_dict = criterion(output, img, text_input, mask_img, mask_text)
         loss = loss_dict['loss_total']
@@ -46,27 +52,30 @@ def train_epoch(model, train_loader, optimizer):
 
         loss_sum += loss.item()
 
-        # print('img_loss: ', img_loss)
-        # print('text_loss: ', text_loss)
-        # print('img_kl_loss: ', img_kl_loss)
-        # print('text_kl_loss: ', text_kl_loss)
-        # print('img_text_kl_loss: ', img_text_kl_loss)
+        # for key in loss_dict:
+        #     wandb.log({key + '_train': loss_dict[key].item()})
 
-        # wandb.log({
-        #     'loss_train': loss.item(),
-        #     'img_loss_train': loss_dict['img_loss'].item(),
-        #     'text_loss_train': loss_dict['text_loss'].item(),
-        #     'combined_kl_loss_train': loss_dict['combined_kl_loss'].item()
-        # })
-
+        # recording the running average of the loss
         for key in loss_dict:
-            wandb.log({key + '_train': loss_dict[key].item()})
+            if key not in avg_loss_dict: # first time
+                avg_loss_dict[key] = loss_dict[key].item()
+            else:
+                avg_loss_dict[key] += loss_dict[key].item()
+
+    for key in avg_loss_dict:
+        if key == 'loss_total':
+            avg_loss_dict[key] /= len(train_loader)
+        else:
+            avg_loss_dict[key] /= (len(train_loader) / 3) # each loss only occurs 1/3 of the time
+        
+        wandb.log({key + '_avg_train': avg_loss_dict[key]}, step=epoch)
 
     return loss_sum / len(train_loader)
 
 def val_epoch(model, val_loader):
     model.eval()
     loss_sum = 0
+    avg_loss_dict = {}
     with torch.no_grad():
         for i, (img, text) in enumerate(tqdm(val_loader)):
             if config.MASKING:
@@ -79,32 +88,39 @@ def val_epoch(model, val_loader):
             # text_input = model.tokenizer(text, return_tensors="pt", padding=True).to(device)
             text_input = text.to(device)
 
-            output = model(img, text_input)
+            output = model(img, text_input, mask_img, mask_text)
 
             if args.debug and i % 10 == 0:
                 disp_img = visualize_data(img, text_input, model.tokenizer, output, config, mask_img, mask_text)
                 cv2.imshow('disp_img', disp_img)
                 cv2.waitKey(1)
                 datetime_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-                cv2.imwrite('logs/val_' + str(epoch) + '_' + datetime_str + '.jpg', (disp_img * 255).astype(np.uint8))
+                # cv2.imwrite('logs/val_' + str(epoch) + '_' + datetime_str + '.jpg', (disp_img * 255).astype(np.uint8))
+                cv2.imwrite('logs/' + args.config + '/val_' + str(epoch) + '_' + datetime_str + '.jpg', (disp_img * 255).astype(np.uint8))
+
 
             loss_dict = criterion(output, img, text_input, mask_img, mask_text)
             loss = loss_dict['loss_total']
             loss_sum += loss.item()
 
-            # wandb.log({
-            #     'loss_val': loss.item(),
-            #     'img_loss_val': loss_dict['img_loss'].item(),
-            #     'text_loss_val': loss_dict['text_loss'].item(),
-            #     # 'img_kl_loss_val': loss_dict['img_kl_loss'].item(),
-            #     # 'text_kl_loss_val': loss_dict['text_kl_loss'].item(),
-            #     # 'img_text_kl_loss_val': loss_dict['img_text_kl_loss'].item(),
-            #     'combined_kl_loss_val': loss_dict['combined_kl_loss'].item()
-            # })
+            # for key in loss_dict:
+            #     wandb.log({key + '_val': loss_dict[key].item()})
 
+            # recording the running average of the loss
             for key in loss_dict:
-                wandb.log({key + '_val': loss_dict[key].item()})
-    
+                if key not in avg_loss_dict:
+                    avg_loss_dict[key] = loss_dict[key].item()
+                else:
+                    avg_loss_dict[key] += loss_dict[key].item()
+
+    for key in avg_loss_dict:
+        if key == 'loss_total':
+            avg_loss_dict[key] /= len(val_loader)
+        else:
+            avg_loss_dict[key] /= (len(val_loader) / 3) # each loss only occurs 1/3 of the time
+        
+        wandb.log({key + '_avg_val': avg_loss_dict[key]}, step=epoch)
+
     return loss_sum / len(val_loader)
 
 def get_text_loss(pred, target):
@@ -113,12 +129,9 @@ def get_text_loss(pred, target):
     pred = pred.view(-1, pred.size(-1)) # (batch_size*seq_len, vocab_size)
     target = target.view(-1) # (batch_size*seq_len)
 
-    # print('pred: ', pred, 'target: ', target)
-    print('pred size: ', pred.size(), 'target size: ', target.size())
-
+    # print('pred size: ', pred.size(), 'target size: ', target.size())
     # cross entropy loss, ignoring padding
     loss = torch.nn.functional.cross_entropy(pred, target, ignore_index=0)
-    print('text loss size: ', loss.size())
 
     return loss
 
@@ -127,16 +140,6 @@ def criterion(output, img, text_input, mask_img, mask_text):
     # img_loss = torch.nn.functional.l1_loss(output['pred_img'], img) # TODO: change to gaussian NLL loss
     img_loss = torch.nn.GaussianNLLLoss()(output['pred_img_means'], img, torch.exp(output['pred_img_logvars'])) # input, target, variance
     text_loss = get_text_loss(output['pred_text'], text_input['input_ids'])
-
-    # applying unit gaussian prior to image features
-    # img_prior_mean = torch.zeros_like(output['img_feat_means']).to(device)
-    # img_prior_logvar = torch.zeros_like(output['img_feat_logvars']).to(device)
-    # img_kl_loss = kl_divergence(output['img_feat_means'], output['img_feat_logvars'], img_prior_mean, img_prior_logvar)
-
-    # applying unit gaussian prior to text features
-    # text_prior_mean = torch.zeros_like(output['text_feat_means']).to(device)
-    # text_prior_logvar = torch.zeros_like(output['text_feat_logvars']).to(device)
-    # text_kl_loss = kl_divergence(output['text_feat_means'], output['text_feat_logvars'], text_prior_mean, text_prior_logvar)
 
     # applying unit gaussian prior to combined image and text features
     combined_prior_mean = torch.zeros_like(output['combined_embedding_means']).to(device)
@@ -149,32 +152,33 @@ def criterion(output, img, text_input, mask_img, mask_text):
     if args.debug:
         print('img_loss: ', img_loss)
         print('text_loss: ', text_loss)
-        # print('img_kl_loss: ', img_kl_loss)
-        # print('text_kl_loss: ', text_kl_loss)
-        # print('img_text_kl_loss: ', img_text_kl_loss)
-        print('combined_kl_loss: ', combined_kl_loss)        
+        print('kl_loss: ', combined_kl_loss)        
 
-    # return img_loss + text_loss  # + img_kl_loss + text_kl_loss + img_text_kl_loss
     if mask_img:
-        loss_total = text_loss + combined_kl_loss
+        # loss_total = config.LAMBDA_TEXT * text_loss + config.LAMBDA_KL * combined_kl_loss
+        loss_total = config.LAMBDA_IMAGE * img_loss + config.LAMBDA_KL * combined_kl_loss
+        # loss_total = config.LAMBDA_IMAGE * img_loss + config.LAMBDA_TEXT * text_loss + config.LAMBDA_KL * combined_kl_loss
+        
         return {
             'loss_total': loss_total,
             'text_only_loss_total': loss_total,
-            't2i_loss': text_loss,
+            't2t_loss': text_loss,
+            't2i_loss': img_loss,
             'text_only_combined_kl_loss': combined_kl_loss
         }
     elif mask_text:
-        loss_total = img_loss + combined_kl_loss
+        # loss_total = config.LAMBDA_IMAGE * img_loss + config.LAMBDA_KL * combined_kl_loss
+        loss_total = config.LAMBDA_TEXT * text_loss + config.LAMBDA_KL * combined_kl_loss
+        # loss_total = config.LAMBDA_IMAGE * img_loss + config.LAMBDA_TEXT * text_loss + config.LAMBDA_KL * combined_kl_loss
         return {
             'loss_total': loss_total,
             'img_only_loss_total': loss_total,
-            'i2t_loss': img_loss,
+            'i2i_loss': img_loss,
+            'i2t_loss': text_loss,
             'img_only_combined_kl_loss': combined_kl_loss
         }
     else:
-        # loss_total = img_loss + 10 * text_loss + 0.001 * img_kl_loss + 0.001 * text_kl_loss + 0.02 * img_text_kl_loss
-        # loss_total = img_loss + text_loss + 0.01 * combined_kl_loss
-        loss_total = img_loss + 0.05 * text_loss + 0.01 * combined_kl_loss
+        loss_total = config.LAMBDA_IMAGE * img_loss + config.LAMBDA_TEXT * text_loss + config.LAMBDA_KL * combined_kl_loss
 
         return {
                 'loss_total': loss_total,
@@ -217,8 +221,6 @@ def custom_collate_fn(batch):
     # ignoring padding tokens
     text_input["attention_mask"] = (text_input["input_ids"] != model.tokenizer.pad_token_id)
 
-    print('padded text_input ids: ', text_input["input_ids"].shape)
-
     # so we can access the raw text later
     # text_input["raw_text"] = torch.tensor(texts)
 
@@ -233,11 +235,22 @@ if __name__ == "__main__":
     datetime_str = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     wandb.run.name = args.config + '_' + datetime_str
 
+    if not os.path.exists('checkpoints'):
+        os.makedirs('checkpoints')
+    if not os.path.exists('logs'):
+        os.makedirs('logs')
+    if not os.path.exists('logs/' + args.config):
+        os.makedirs('logs/' + args.config)
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = T2IVAE().to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
 
+    if hasattr(config, 'LR_SCHEDULER') and config.LR_SCHEDULE:
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=config.LR_SCHEDULE_STEP, gamma=config.LR_SCHEDULE_GAMMA) # multiply lr by gamma every step_size epochs
+    else:
+        scheduler = None
 
     if config.DATASET == 'coco':
         train_dataset = dset.CocoCaptions(root = 'coco/images/train2014',
@@ -321,6 +334,9 @@ if __name__ == "__main__":
             best_val_loss = val_loss
             torch.save(model.state_dict(), 'checkpoints/' + args.config + '_best.pt')
             print("Saved best model")
+        if epoch % 100 == 0:
+            torch.save(model.state_dict(), 'checkpoints/' + args.config + '_epoch' + str(epoch) + '.pt')
+            print("Saved model at epoch ", epoch)
 
     print('Number of samples: ', len(train_loader))
 

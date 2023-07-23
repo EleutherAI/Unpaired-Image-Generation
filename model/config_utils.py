@@ -20,5 +20,7 @@ def parse_config_args():
     parser.add_argument('--model', type=str, default='default')
     parser.add_argument('--debug', action='store_true')
     parser.add_argument('--sample_latent', action='store_true')
+    parser.add_argument('--t2i', action='store_true')
+    parser.add_argument('--i2t', action='store_true')
     args = parser.parse_args()
     return load_config(args.config), args

@@ -13,6 +13,7 @@ from model.config_utils import parse_config_args
 import random
 
 stage = 'val'
+print('stage:', stage)
 
 config, args = parse_config_args()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -32,6 +33,14 @@ def custom_collate_fn(batch):
 
     text_input = model.tokenizer(texts, return_tensors="pt", padding=True, max_length=config.MAX_SEQ_LEN, truncation=True) # ["input_ids"]
 
+    # # Define the image transformations
+    # transform = transforms.Compose([
+    #     transforms.ToTensor(),  # Convert PIL image to PyTorch tensor
+    # ])
+
+    # Apply transformations to each image in the batch
+    # images = [transform(image) for image in images]
+
     # Convert images list into a PyTorch tensor
     images = torch.stack(images)
 
@@ -41,64 +50,16 @@ def custom_collate_fn(batch):
     else:
         text_input["input_ids"] = text_input["input_ids"][:, :config.MAX_SEQ_LEN] # truncate to max seq len
 
+    # setting attention mask
     # ignoring padding tokens
     text_input["attention_mask"] = (text_input["input_ids"] != model.tokenizer.pad_token_id)
 
     print('padded text_input ids: ', text_input["input_ids"].shape)
 
+    # so we can access the raw text later
+    # text_input["raw_text"] = torch.tensor(texts)
+
     return images, text_input
-
-
-
-# if stage == 'train':
-#     if config.DATASET == 'coco':
-#         dataset = dset.CocoCaptions(root = 'coco/images/train2014',
-#                                 annFile = 'coco/annotations/annotations_trainval2014/annotations/captions_train2014.json',
-#                                 transform=transforms.Compose([
-#                                     transforms.ToTensor(),
-#                                     transforms.Resize((224, 224)),
-#                                 ]))
-        
-        
-#     elif config.DATASET == 'cifar100':
-#         dataset = dset.CIFAR100(root='cifar100', train=True, download=True,
-#                             transform=transforms.Compose([
-#                                 transforms.ToTensor(),
-#                                 transforms.Resize((32, 32))
-#                             ]))
-        
-#         # loading the cifar class names from a text file
-#         with open('cifar100_labels.txt', 'r') as f:
-#             config.CIFAR100_CLASSES = f.read().splitlines()
-#             print('class names:', config.CIFAR100_CLASSES)
-#     else:
-#         print('Dataset not supported')
-#         raise NotImplementedError
-    
-
-# elif stage == 'val':
-#     if config.DATASET == 'coco':
-#         dataset = dset.CocoCaptions(root = 'coco/images/val2014',
-#                                 annFile = 'coco/annotations/annotations_trainval2014/annotations/captions_val2014.json',
-#                                 transform=transforms.Compose([
-#                                     transforms.ToTensor(),
-#                                     transforms.Resize((224, 224))
-#                                 ]))
-        
-#     elif config.DATASET == 'cifar100':
-#         dataset = dset.CIFAR100(root='cifar100', train=False, download=True,
-#                             transform=transforms.Compose([
-#                                 transforms.ToTensor(),
-#                                 transforms.Resize((32, 32))
-#                             ]))
-        
-#         # loading the cifar class names from a text file
-#         with open('cifar100_labels.txt', 'r') as f:
-#             config.CIFAR100_CLASSES = f.read().splitlines()
-#             print('class names:', config.CIFAR100_CLASSES)
-#     else:
-#         print('Dataset not supported')
-#         raise NotImplementedError
 
 if config.DATASET == 'coco':
     if stage == 'train':
@@ -141,8 +102,19 @@ with torch.no_grad():
         img = img.to(device).float()
         text_input = text.to(device)
 
-        output = model(img, text_input)
-        disp_img = visualize_data(img, text_input, model.tokenizer, output, config=config)
+        if config.MASKING:
+            if args.t2i:
+                mask_img, mask_text = True, False
+            elif args.i2t:
+                mask_img, mask_text = False, True
+            else:
+                mask_img, mask_text = get_masks() 
+        else:
+            mask_img, mask_text = False, False
+
+        output = model(img, text_input, mask_img, mask_text)
+        # output['pred_img_logvars'] -= 4 # scaling down the variance for better visualization
+        disp_img = visualize_data(img, text_input, model.tokenizer, output, config, mask_img, mask_text)
         
         cv2.imshow('img', disp_img)
         cv2.waitKey(0)

@@ -1,0 +1,15 @@
+BATCH_SIZE: 256
+NUM_EPOCHS: 500
+NUM_WORKERS: 12
+LEARNING_RATE: 0.0005
+MAX_SEQ_LEN: 8
+LATENT_DIM: 512
+DATASET: cifar100
+MASKING: True
+LAMBDA_IMAGE: 1.0
+LAMBDA_TEXT: 0.05
+LAMBDA_KL: 0.01
+WARMUP_EPOCHS: 50 # number of warmup epochs (unmasked training)
+LR_SCHEDULE: True # use learning rate schedule
+LR_SCHEDULE_GAMMA: 0.9 # learning rate schedule gamma
+LR_SCHEDULE_STEP: 10 # learning rate schedule step
