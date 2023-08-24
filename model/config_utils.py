@@ -22,5 +22,6 @@ def parse_config_args():
     parser.add_argument('--sample_latent', action='store_true')
     parser.add_argument('--t2i', action='store_true')
     parser.add_argument('--i2t', action='store_true')
+    parser.add_argument('--reconstruction', action='store_true') # img reconstruction for debugging
     args = parser.parse_args()
     return load_config(args.config), args

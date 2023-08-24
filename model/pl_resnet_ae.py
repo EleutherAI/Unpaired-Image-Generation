@@ -194,7 +194,7 @@ class ResNetEncoder(nn.Module):
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        # self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
@@ -213,17 +213,25 @@ class ResNetEncoder(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+        print('x input', x.shape)
         x = self.conv1(x)
+        print('x after conv1', x.shape)
         x = self.bn1(x)
         x = self.relu(x)
         x = self.maxpool(x)
+        print('x after maxpool', x.shape)
 
         x = self.layer1(x)
+        print('x after layer1', x.shape)
         x = self.layer2(x)
+        print('x after layer2', x.shape)
         x = self.layer3(x)
+        print('x after layer3', x.shape)
         x = self.layer4(x)
+        print('x after layer4', x.shape)
 
-        x = self.avgpool(x)
+        # x = self.avgpool(x)
+        # print('x after avgpool', x.shape)
         # x = torch.flatten(x, 1)
         # print('x after flatten', x.shape)
 
@@ -234,7 +242,6 @@ class ResNetDecoder(nn.Module):
 
     def __init__(self, block, layers, latent_dim, input_height, first_conv=False, maxpool1=False, nc=3) -> None:
         super().__init__()
-
         self.expansion = block.expansion
         self.inplanes = 512 * block.expansion
         self.first_conv = first_conv
@@ -284,21 +291,37 @@ class ResNetDecoder(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+        print('decoder input', x.shape)
         x = self.linear(x)
+        print('decoder after linear', x.shape)
 
         # NOTE: replaced this by Linear(in_channels, 514 * 4 * 4)
         # x = F.interpolate(x, scale_factor=4)
 
         x = x.view(x.size(0), 512 * self.expansion, 4, 4)
+        print('decoder after view', x.shape)
         x = self.upscale1(x)
+        print('decoder after upscale1', x.shape)
 
         x = self.layer1(x)
+        print('decoder after layer1', x.shape)
         x = self.layer2(x)
+        print('decoder after layer2', x.shape)
         x = self.layer3(x)
+        print('decoder after layer3', x.shape)
         x = self.layer4(x)
+        print('decoder after layer4', x.shape)
         x = self.upscale(x)
+        print('decoder after upscale', x.shape)
         x = self.conv1(x)
+        print('decoder after conv1', x.shape)
 
+        # first three channels are means, last three channels are logvars
+        # the range of means should be between 0 and 1
+        x[:, :3, :, :] = torch.sigmoid(x[:, :3, :, :])
+
+        # the range of logvars should be between -10 and 10
+        x[:, 3:, :, :] = 10 * torch.tanh(x[:, 3:, :, :]) # tanh * 10 to get range between -10 and 10
         return x
 
 def get_resnet18_encoder(first_conv, maxpool1):
@@ -312,3 +335,15 @@ def get_resnet50_encoder(first_conv, maxpool1):
 
 def get_resnet50_decoder(latent_dim, input_height, first_conv, maxpool1, nc):
     return ResNetDecoder(DecoderBottleneck, [3, 4, 6, 3], latent_dim, input_height, first_conv, maxpool1, nc)
+
+def get_resnet101_encoder(first_conv, maxpool1):
+    return ResNetEncoder(EncoderBottleneck, [3, 4, 23, 3], first_conv, maxpool1)
+
+def get_resnet101_decoder(latent_dim, input_height, first_conv, maxpool1, nc):
+    return ResNetDecoder(DecoderBottleneck, [3, 4, 23, 3], latent_dim, input_height, first_conv, maxpool1, nc)
+
+def get_resnet152_encoder(first_conv, maxpool1):
+    return ResNetEncoder(EncoderBottleneck, [3, 8, 36, 3], first_conv, maxpool1)
+
+def get_resnet152_decoder(latent_dim, input_height, first_conv, maxpool1, nc):
+    return ResNetDecoder(DecoderBottleneck, [3, 8, 36, 3], latent_dim, input_height, first_conv, maxpool1, nc)

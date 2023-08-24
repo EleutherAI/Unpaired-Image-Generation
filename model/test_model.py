@@ -30,6 +30,9 @@ def custom_collate_fn(batch):
     elif config.DATASET == 'cifar100':
         # turning the CIFAR 100 class index into a string
         texts = [config.CIFAR100_CLASSES[text] for text in texts]
+    elif config.DATASET == 'cifar10':
+        # turning the CIFAR 10 class index into a string
+        texts = [config.CIFAR10_CLASSES[text] for text in texts]
 
     text_input = model.tokenizer(texts, return_tensors="pt", padding=True, max_length=config.MAX_SEQ_LEN, truncation=True) # ["input_ids"]
 
@@ -76,6 +79,7 @@ if config.DATASET == 'coco':
                                     transforms.ToTensor(),
                                     transforms.Resize((224, 224))
                                 ]))
+        
 elif config.DATASET == 'cifar100':
     if stage == 'train':
         dataset = dset.CIFAR100(root='cifar100', train=True, download=True,
@@ -94,6 +98,25 @@ elif config.DATASET == 'cifar100':
     with open('cifar100_labels.txt', 'r') as f:
         config.CIFAR100_CLASSES = f.read().splitlines()
         print('class names:', config.CIFAR100_CLASSES)
+        
+elif config.DATASET == 'cifar10':
+    if stage == 'train':
+        dataset = dset.CIFAR10(root='cifar10', train=True, download=True,
+                            transform=transforms.Compose([
+                                transforms.ToTensor(),
+                                transforms.Resize((32, 32))
+                            ]))
+    elif stage == 'val':
+        dataset = dset.CIFAR10(root='cifar10', train=False, download=True,
+                            transform=transforms.Compose([
+                                transforms.ToTensor(),
+                                transforms.Resize((32, 32))
+                            ]))
+    
+    # loading the cifar class names from a text file
+    with open('cifar10_labels.txt', 'r') as f:
+        config.CIFAR10_CLASSES = f.read().splitlines()
+        print('class names:', config.CIFAR10_CLASSES)
 
 loader = DataLoader(dataset, batch_size=1, shuffle=True, collate_fn=custom_collate_fn)
 
@@ -113,7 +136,8 @@ with torch.no_grad():
             mask_img, mask_text = False, False
 
         output = model(img, text_input, mask_img, mask_text)
-        # output['pred_img_logvars'] -= 4 # scaling down the variance for better visualization
+        print('combined embedding means (mean, std): ', output['combined_embedding_means'].mean(), output['combined_embedding_means'].std())
+        print('combined embedding logvars (mean, std): ', output['combined_embedding_logvars'].mean(), output['combined_embedding_logvars'].std())
         disp_img = visualize_data(img, text_input, model.tokenizer, output, config, mask_img, mask_text)
         
         cv2.imshow('img', disp_img)
