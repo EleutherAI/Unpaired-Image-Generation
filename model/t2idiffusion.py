@@ -2,7 +2,8 @@ import torch
 import torch.nn as nn
 
 from transformers import T5Tokenizer, T5ForConditionalGeneration
-from pl_resnet_ae import get_resnet18_encoder
+from model.pl_resnet_ae import get_resnet18_encoder
+from tqdm import tqdm
 
 # very crude implementation of unpaired t2i and i2t with diffusion
 # TODO:
@@ -92,6 +93,7 @@ class UNet(nn.Module):
         latent = latent.flatten()
 
         # need to combine the latent space with timestep encoding and the image features
+        print('out:', out.shape, 'latent:', latent.shape)
         out = out + latent
         # reshape ,512 to ,2,16,16
         out = out.view(-1, 2, 16, 16)
@@ -122,13 +124,14 @@ class Decoder(nn.Module):
 # https://github.com/dome272/Diffusion-Models-pytorch/blob/main/ddpm_conditional.py
 class Diffusion:
     def __init__(self, noise_steps=1000, beta_start=1e-4, beta_end=0.02, img_size=224):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.noise_steps = noise_steps
         self.beta_start = beta_start
         self.beta_end = beta_end
 
-        self.beta = self.prepare_noise_schedule()
-        self.alpha = 1. - self.beta
-        self.alpha_hat = torch.cumprod(self.alpha, dim=0)
+        self.beta = self.prepare_noise_schedule().to(self.device)
+        self.alpha = (1. - self.beta).to(self.device)
+        self.alpha_hat = torch.cumprod(self.alpha, dim=0).to(self.device)
 
         self.img_size = img_size
 
@@ -136,12 +139,48 @@ class Diffusion:
         return torch.linspace(self.beta_start, self.beta_end, self.noise_steps)
 
     def noise_images(self, x, t):
+        print('x:', x.shape)
+        print('t:', t.shape)
+        sqrt_alpha_hat = torch.sqrt(self.alpha_hat[t]).view(-1, 1, 1, 1)
+        print('sqrt_alpha_hat:', sqrt_alpha_hat.shape)
+        sqrt_one_minus_alpha_hat = torch.sqrt(1 - self.alpha_hat[t]).view(-1, 1, 1, 1)
+        print('sqrt_one_minus_alpha_hat:', sqrt_one_minus_alpha_hat.shape)
+        Ɛ = torch.randn_like(x)
+        # noised image, noise
+        print('sqrt_alpha_hat * x', (sqrt_alpha_hat * x).shape)
+        print('sqrt_one_minus_alpha_hat * Ɛ', (sqrt_one_minus_alpha_hat * Ɛ).shape)
+        return sqrt_alpha_hat * x + sqrt_one_minus_alpha_hat * Ɛ, Ɛ
+    
+    def noise_images_batched(self, x, t):
         sqrt_alpha_hat = torch.sqrt(self.alpha_hat[t])
         sqrt_one_minus_alpha_hat = torch.sqrt(1 - self.alpha_hat[t])
         Ɛ = torch.randn_like(x)
-        # noised image, noise
         return sqrt_alpha_hat * x + sqrt_one_minus_alpha_hat * Ɛ, Ɛ
-
+    
+    def sample(self, model, n, labels, cfg_scale=3):
+        print(f"Sampling {n} new images....")
+        model.eval()
+        with torch.no_grad():
+            x = torch.randn((n, 3, self.img_size, self.img_size)).to(self.device)
+            for i in tqdm(reversed(range(1, self.noise_steps)), position=0):
+                # print('i:', i)
+                t = (torch.ones(n) * i).long().to(self.device)
+                predicted_noise = model(x, t, labels)
+                if cfg_scale > 0:
+                    uncond_predicted_noise = model(x, t, None)
+                    predicted_noise = torch.lerp(uncond_predicted_noise, predicted_noise, cfg_scale)
+                alpha = self.alpha[t][:, None, None, None]
+                alpha_hat = self.alpha_hat[t][:, None, None, None]
+                beta = self.beta[t][:, None, None, None]
+                if i > 1:
+                    noise = torch.randn_like(x)
+                else:
+                    noise = torch.zeros_like(x)
+                x = 1 / torch.sqrt(alpha) * (x - ((1 - alpha) / (torch.sqrt(1 - alpha_hat))) * predicted_noise) + torch.sqrt(beta) * noise
+        # model.train()
+        x = (x.clamp(-1, 1) + 1) / 2
+        # x = (x * 255).type(torch.uint8)
+        return x
 
 def train(img, text):
     enc = Encoder()

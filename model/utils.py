@@ -58,24 +58,36 @@ def tensor_to_cv2(tensor, config=None):
 
     if config is None or config.DATASET == 'coco':
         # resizing to 4x
-        img = cv2.resize(img, (0, 0), fx=4, fy=4)
+        img = cv2.resize(img, (0, 0), fx=4, fy=4, interpolation=cv2.INTER_NEAREST)
     elif config.DATASET == 'cifar100':
         # resizing to 28x
-        img = cv2.resize(img, (0, 0), fx=28, fy=28)
-
+        img = cv2.resize(img, (0, 0), fx=28, fy=28, interpolation=cv2.INTER_NEAREST)
+    elif config.DATASET == 'cifar10':
+        # resizing to 28x
+        img = cv2.resize(img, (0, 0), fx=28, fy=28, interpolation=cv2.INTER_NEAREST)
+    else:
+        raise ValueError('invalid dataset')
+    
     return img
 
-def visualize_data(img_input, text_input, tokenizer, output=None, config=None, mask_img=False, mask_text=False):
+def visualize_data(img_input, text_input, tokenizer, output=None, config=None, mask_img=False, mask_text=False, model=None):
     gt_img = tensor_to_cv2(img_input[0], config)
     zero_img = tensor_to_cv2(torch.zeros_like(img_input[0]), config)
 
     text_gt = get_viewable_text(text_input["input_ids"][0], tokenizer)
-    empty_text = ''
     
     if output is not None:
-        # visualizing predicted image and caption
-        # img_output = tensor_to_cv2(output['pred_img'][0], config)
-        img_output = tensor_to_cv2(output['pred_img_means'][0], config)
+        if hasattr(config, 'DIFFUSION') and config.DIFFUSION:
+            img_output = model.diffusion.sample(model.unet, 1, model.combined_embedding[0])
+            print('diffusion img_output: ', img_output)
+            print('diffusion img_output shape: ', img_output.shape)
+            img_output = tensor_to_cv2(img_output[0], config)
+            # img_output = tensor_to_cv2(output['pred_img'][0], config)
+
+        else:
+            # visualizing predicted image and caption
+            img_output = tensor_to_cv2(output['pred_img'][0], config)
+            # img_output = tensor_to_cv2(output['pred_img_means'][0], config)
 
         pred_token_ids = torch.argmax(output['pred_text'][0], dim=1)
         text_output = get_viewable_text(pred_token_ids, tokenizer)
@@ -131,8 +143,13 @@ class MaskedDataset(Dataset):
     def __len__(self):
         return len(self.dataset)
     
-def get_masks():
+def get_masks(warmup=False): # TODO: add warmup condition, move out of trainer
     # 3 possible states
+    # if warmup:
+    #     mask_state = random.randint(0, 2)
+    # else:
+    #     mask_state = random.randint(0, 1) # only mask one thing at a time if not warmup
+
     mask_state = random.randint(0, 2)
 
     if mask_state == 0:

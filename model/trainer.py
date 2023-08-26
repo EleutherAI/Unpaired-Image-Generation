@@ -25,7 +25,7 @@ def train_epoch(model, train_loader, optimizer):
             mask_img, mask_text = False, False
         elif config.MASKING:
             print('in masking phase')
-            mask_img, mask_text = get_masks() 
+            mask_img, mask_text = get_masks(warmup=False) 
         else:
             mask_img, mask_text = False, False
 
@@ -38,8 +38,8 @@ def train_epoch(model, train_loader, optimizer):
 
         output = model(img, text_input, mask_img, mask_text)
 
-        if args.debug and i % 10 == 0:
-            disp_img = visualize_data(img, text_input, model.tokenizer, output, config, mask_img, mask_text)
+        if args.debug and i % 100 == 0:
+            disp_img = visualize_data(img, text_input, model.tokenizer, output, config, mask_img, mask_text, model=model)
             cv2.imshow('disp_img', disp_img)
             cv2.waitKey(1)
             datetime_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -48,6 +48,15 @@ def train_epoch(model, train_loader, optimizer):
         loss_dict = criterion(output, img, text_input, mask_img, mask_text)
         loss = loss_dict['loss_total']
         loss.backward()
+
+        # quit if loss is nan
+        if torch.isnan(loss):
+            print('loss is nan, quitting')
+            quit()
+
+        if hasattr(config, 'CLIP_GRADS') and config.CLIP_GRADS:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config.CLIP_GRADS_NORM)
+
         optimizer.step()
 
         loss_sum += loss.item()
@@ -65,9 +74,11 @@ def train_epoch(model, train_loader, optimizer):
     for key in avg_loss_dict:
         if key == 'loss_total':
             avg_loss_dict[key] /= len(train_loader)
+        elif config.MASKING:
+            avg_loss_dict[key] /= (len(train_loader) / 3) # each loss only occurs 1/3 of the time. TODO: make this less hacky
         else:
-            avg_loss_dict[key] /= (len(train_loader) / 3) # each loss only occurs 1/3 of the time
-        
+            avg_loss_dict[key] /= len(train_loader)
+
         wandb.log({key + '_avg_train': avg_loss_dict[key]}, step=epoch)
 
     return loss_sum / len(train_loader)
@@ -90,8 +101,8 @@ def val_epoch(model, val_loader):
 
             output = model(img, text_input, mask_img, mask_text)
 
-            if args.debug and i % 10 == 0:
-                disp_img = visualize_data(img, text_input, model.tokenizer, output, config, mask_img, mask_text)
+            if args.debug and i % 100 == 0:
+                disp_img = visualize_data(img, text_input, model.tokenizer, output, config, mask_img, mask_text, model=model)
                 cv2.imshow('disp_img', disp_img)
                 cv2.waitKey(1)
                 datetime_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -136,9 +147,6 @@ def get_text_loss(pred, target):
     return loss
 
 def criterion(output, img, text_input, mask_img, mask_text):
-    # applying L1 loss between output['pred_img] and img
-    # img_loss = torch.nn.functional.l1_loss(output['pred_img'], img) # TODO: change to gaussian NLL loss
-    img_loss = torch.nn.GaussianNLLLoss()(output['pred_img_means'], img, torch.exp(output['pred_img_logvars'])) # input, target, variance
     text_loss = get_text_loss(output['pred_text'], text_input['input_ids'])
 
     # applying unit gaussian prior to combined image and text features
@@ -146,44 +154,95 @@ def criterion(output, img, text_input, mask_img, mask_text):
     combined_prior_logvar = torch.zeros_like(output['combined_embedding_logvars']).to(device)
     combined_kl_loss = kl_divergence(output['combined_embedding_means'], output['combined_embedding_logvars'], combined_prior_mean, combined_prior_logvar)
 
-    # kl divergence between image and text features
-    # img_text_kl_loss = kl_divergence(output['img_feat_means'], output['img_feat_logvars'], output['text_feat_means'], output['text_feat_logvars'])
+    if hasattr(config, 'DIFFUSION') and config.DIFFUSION:
+        img_loss_gaussian = torch.tensor(0).to(device)
+        img_loss_L2 = torch.nn.functional.mse_loss(output['pred_img'], img)
+    else:
+        # applying gaussian loss between output['pred_img'] and img (t2i is not deterministic, so using max likelihood)
+        img_loss_gaussian = torch.nn.GaussianNLLLoss()(output['pred_img_means'], img, torch.exp(output['pred_img_logvars'])) # input, target, variance
+        # applying L2 loss between output['pred_img'] and pred_img (reconstruction is deterministic)
+        img_loss_L2 = torch.nn.functional.mse_loss(output['pred_img_means'], img)
 
     if args.debug:
-        print('img_loss: ', img_loss)
+        print('img_loss_gaussian: ', img_loss_gaussian)
+        print('img_loss_L2: ', img_loss_L2)
         print('text_loss: ', text_loss)
         print('kl_loss: ', combined_kl_loss)        
 
     if mask_img:
-        # loss_total = config.LAMBDA_TEXT * text_loss + config.LAMBDA_KL * combined_kl_loss
-        loss_total = config.LAMBDA_IMAGE * img_loss + config.LAMBDA_KL * combined_kl_loss
+        print('masking img')
+        loss_total = config.LAMBDA_TEXT * text_loss + config.LAMBDA_KL * combined_kl_loss # TODO: use this?
+        # loss_total = config.LAMBDA_IMAGE * img_loss + config.LAMBDA_KL * combined_kl_loss
         # loss_total = config.LAMBDA_IMAGE * img_loss + config.LAMBDA_TEXT * text_loss + config.LAMBDA_KL * combined_kl_loss
+        
+        # ensuring each loss is weighted equally
+        # unnormalized_loss = abs(text_loss) + abs(combined_kl_loss)
+        # text_ratio = abs(unnormalized_loss) / abs(text_loss)
+        # kl_ratio = abs(unnormalized_loss) / abs(combined_kl_loss)
+        # loss_total = text_ratio * config.LAMBDA_TEXT * text_loss + kl_ratio * config.LAMBDA_KL * combined_kl_loss
+        # print('loss_total: ', loss_total)
+        # print('unnormalized_loss: ', unnormalized_loss)
+        # print('text_ratio: ', text_ratio)
+        # print('kl_ratio: ', kl_ratio)
+        # print('text_ratio * text_loss: ', text_ratio * text_loss)
+        # print('kl_ratio * combined_kl_loss: ', kl_ratio * combined_kl_loss)
         
         return {
             'loss_total': loss_total,
             'text_only_loss_total': loss_total,
             't2t_loss': text_loss,
-            't2i_loss': img_loss,
+            't2i_loss': img_loss_gaussian,
             'text_only_combined_kl_loss': combined_kl_loss
         }
     elif mask_text:
-        # loss_total = config.LAMBDA_IMAGE * img_loss + config.LAMBDA_KL * combined_kl_loss
-        loss_total = config.LAMBDA_TEXT * text_loss + config.LAMBDA_KL * combined_kl_loss
+        print('masking text')
+        # loss_total = config.LAMBDA_IMAGE * img_loss_gaussian + config.LAMBDA_KL * combined_kl_loss # TODO: use this?
+        loss_total = config.LAMBDA_IMAGE * img_loss_L2 + config.LAMBDA_KL * combined_kl_loss
+        # loss_total = config.LAMBDA_TEXT * text_loss + config.LAMBDA_KL * combined_kl_loss
         # loss_total = config.LAMBDA_IMAGE * img_loss + config.LAMBDA_TEXT * text_loss + config.LAMBDA_KL * combined_kl_loss
+        
+        # ensuring each loss is weighted equally
+        # unnormalized_loss = abs(img_loss_gaussian) + abs(combined_kl_loss)
+        # img_ratio = abs(unnormalized_loss) / abs(img_loss_gaussian)
+        # kl_ratio = abs(unnormalized_loss) / abs(combined_kl_loss)
+        # loss_total = img_ratio * config.LAMBDA_IMAGE * img_loss_gaussian + kl_ratio * config.LAMBDA_KL * combined_kl_loss
+        # print('loss_total: ', loss_total)
+        # print('unnormalized_loss: ', unnormalized_loss)
+        # print('img_ratio: ', img_ratio)
+        # print('kl_ratio: ', kl_ratio)
+        # print('img_ratio * img_loss_gaussian: ', img_ratio * img_loss_gaussian)
+        # print('kl_ratio * combined_kl_loss: ', kl_ratio * combined_kl_loss)
+
         return {
             'loss_total': loss_total,
             'img_only_loss_total': loss_total,
-            'i2i_loss': img_loss,
+            'i2i_loss': img_loss_L2,
             'i2t_loss': text_loss,
             'img_only_combined_kl_loss': combined_kl_loss
         }
     else:
-        loss_total = config.LAMBDA_IMAGE * img_loss + config.LAMBDA_TEXT * text_loss + config.LAMBDA_KL * combined_kl_loss
+        print('not masking')
+        loss_total = config.LAMBDA_IMAGE * img_loss_L2 + config.LAMBDA_TEXT * text_loss + config.LAMBDA_KL * combined_kl_loss
+        
+        # ensuring each loss is weighted equally
+        # unnormalized_loss = abs(img_loss_L2) + abs(text_loss) + abs(combined_kl_loss)
+        # img_ratio = abs(unnormalized_loss) / abs(img_loss_L2)
+        # text_ratio = abs(unnormalized_loss) / abs(text_loss)
+        # kl_ratio = abs(unnormalized_loss) / abs(combined_kl_loss)
+        # loss_total = img_ratio * config.LAMBDA_IMAGE * img_loss_L2 + text_ratio * config.LAMBDA_TEXT * text_loss + kl_ratio * config.LAMBDA_KL * combined_kl_loss
+        # print('loss_total: ', loss_total)
+        # print('unnormalized_loss: ', unnormalized_loss)
+        # print('img_ratio: ', img_ratio)
+        # print('text_ratio: ', text_ratio)
+        # print('kl_ratio: ', kl_ratio)
+        # print('img_ratio * img_loss_L2: ', img_ratio * img_loss_L2)
+        # print('text_ratio * text_loss: ', text_ratio * text_loss)
+        # print('kl_ratio * combined_kl_loss: ', kl_ratio * combined_kl_loss)
 
         return {
                 'loss_total': loss_total,
                 'combined_loss_total': loss_total,
-                'combined_img_loss': img_loss,
+                'combined_img_loss': img_loss_L2,
                 'combined_text_loss': text_loss,
                 'combined_kl_loss': combined_kl_loss
                 }
@@ -197,6 +256,9 @@ def custom_collate_fn(batch):
     elif config.DATASET == 'cifar100':
         # turning the CIFAR 100 class index into a string
         texts = [config.CIFAR100_CLASSES[text] for text in texts]
+    elif config.DATASET == 'cifar10':
+        # turning the CIFAR 10 class index into a string
+        texts = [config.CIFAR10_CLASSES[text] for text in texts]
 
     text_input = model.tokenizer(texts, return_tensors="pt", padding=True, max_length=config.MAX_SEQ_LEN, truncation=True) # ["input_ids"]
 
@@ -258,13 +320,15 @@ if __name__ == "__main__":
                                 transform=transforms.Compose([
                                     transforms.ToTensor(),
                                     transforms.Resize((224, 224)),
+                                    # transforms.Resize((56, 56)),
                                 ]))
         
         val_dataset = dset.CocoCaptions(root = 'coco/images/val2014',
                                 annFile = 'coco/annotations/annotations_trainval2014/annotations/captions_val2014.json',
                                 transform=transforms.Compose([
                                     transforms.ToTensor(),
-                                    transforms.Resize((224, 224))
+                                    transforms.Resize((224, 224)),
+                                    # transforms.Resize((56, 56)),
                                 ]))
     elif config.DATASET == 'cifar100':
         train_dataset = dset.CIFAR100(root='cifar100', train=True, download=True,
@@ -296,22 +360,28 @@ if __name__ == "__main__":
         with open('cifar100_labels.txt', 'r') as f:
             config.CIFAR100_CLASSES = f.read().splitlines()
             print('class names:', config.CIFAR100_CLASSES)
+
+    elif config.DATASET == 'cifar10':
+        train_dataset = dset.CIFAR10(root='cifar10', train=True, download=True,
+                            transform=transforms.Compose([
+                                transforms.ToTensor(),
+                                transforms.Resize((32, 32))
+                            ]))
+        
+        val_dataset = dset.CIFAR10(root='cifar10', train=False, download=True,
+                            transform=transforms.Compose([
+                                transforms.ToTensor(),
+                                transforms.Resize((32, 32))
+                            ]))
+        
+        # loading the cifar class names from a text file
+        with open('cifar10_labels.txt', 'r') as f:
+            config.CIFAR10_CLASSES = f.read().splitlines()
+            print('class names:', config.CIFAR10_CLASSES)
+
     else:
         print('Dataset not supported')
         raise NotImplementedError
-
-    # masking out half of the images and half of the text
-    # # train_dataset is a list of tuples (image, caption)
-    # for i in range(len(train_dataset)):
-    #     mask_img = random.randint(0, 1)
-    #     mask_text = random.randint(0, 1)
-    #     if mask_img:
-    #         print('debug img', train_dataset[i][0])
-    #         train_dataset[i][0] = torch.zeros_like(list(train_dataset[i])[0])
-    #     if mask_text:
-    #         print('debug text', train_dataset[i][1])
-    #         # setting input ids to just model.tokenizer.eos_token_id
-    #         train_dataset[i][1]["input_ids"] = torch.full_like(list(train_dataset[i])[1]["input_ids"], model.tokenizer.eos_token_id)
 
     train_loader = DataLoader(train_dataset, batch_size=config.BATCH_SIZE, shuffle=True, collate_fn=custom_collate_fn, num_workers=config.NUM_WORKERS)
     # train_loader = DataLoader(train_dataset, batch_size=config.BATCH_SIZE, shuffle=False, collate_fn=custom_collate_fn, num_workers=config.NUM_WORKERS, sampler=SubsetRandomSampler(range(13))) # for debugging
