@@ -177,12 +177,12 @@ def criterion(output, img, text_input, mask_img, mask_text):
         text_ratio = abs(unnormalized_loss) / abs(text_loss)
         kl_ratio = abs(unnormalized_loss) / abs(combined_kl_loss)
         # loss_total = text_ratio * config.LAMBDA_TEXT * text_loss + kl_ratio * config.LAMBDA_KL * combined_kl_loss
-        print('loss_total: ', loss_total)
-        print('unnormalized_loss: ', unnormalized_loss)
-        print('text_ratio: ', text_ratio)
-        print('kl_ratio: ', kl_ratio)
-        print('text_ratio * text_loss: ', text_ratio * text_loss)
-        print('kl_ratio * combined_kl_loss: ', kl_ratio * combined_kl_loss)
+        # print('loss_total: ', loss_total)
+        # print('unnormalized_loss: ', unnormalized_loss)
+        # print('text_ratio: ', text_ratio)
+        # print('kl_ratio: ', kl_ratio)
+        # print('text_ratio * text_loss: ', text_ratio * text_loss)
+        # print('kl_ratio * combined_kl_loss: ', kl_ratio * combined_kl_loss)
         
         return {
             'loss_total': loss_total,
@@ -193,7 +193,8 @@ def criterion(output, img, text_input, mask_img, mask_text):
         }
     elif mask_text:
         print('masking text')
-        loss_total = config.LAMBDA_IMAGE * img_loss_gaussian + config.LAMBDA_KL * combined_kl_loss # TODO: use this?
+        # loss_total = config.LAMBDA_IMAGE * img_loss_gaussian + config.LAMBDA_KL * combined_kl_loss # TODO: use this?
+        loss_total = config.LAMBDA_IMAGE * img_loss_L2 + config.LAMBDA_KL * combined_kl_loss
         # loss_total = config.LAMBDA_TEXT * text_loss + config.LAMBDA_KL * combined_kl_loss
         # loss_total = config.LAMBDA_IMAGE * img_loss + config.LAMBDA_TEXT * text_loss + config.LAMBDA_KL * combined_kl_loss
         
@@ -202,12 +203,12 @@ def criterion(output, img, text_input, mask_img, mask_text):
         img_ratio = abs(unnormalized_loss) / abs(img_loss_gaussian)
         kl_ratio = abs(unnormalized_loss) / abs(combined_kl_loss)
         # loss_total = img_ratio * config.LAMBDA_IMAGE * img_loss_gaussian + kl_ratio * config.LAMBDA_KL * combined_kl_loss
-        print('loss_total: ', loss_total)
-        print('unnormalized_loss: ', unnormalized_loss)
-        print('img_ratio: ', img_ratio)
-        print('kl_ratio: ', kl_ratio)
-        print('img_ratio * img_loss_gaussian: ', img_ratio * img_loss_gaussian)
-        print('kl_ratio * combined_kl_loss: ', kl_ratio * combined_kl_loss)
+        # print('loss_total: ', loss_total)
+        # print('unnormalized_loss: ', unnormalized_loss)
+        # print('img_ratio: ', img_ratio)
+        # print('kl_ratio: ', kl_ratio)
+        # print('img_ratio * img_loss_gaussian: ', img_ratio * img_loss_gaussian)
+        # print('kl_ratio * combined_kl_loss: ', kl_ratio * combined_kl_loss)
 
         return {
             'loss_total': loss_total,
@@ -226,14 +227,14 @@ def criterion(output, img, text_input, mask_img, mask_text):
         text_ratio = abs(unnormalized_loss) / abs(text_loss)
         kl_ratio = abs(unnormalized_loss) / abs(combined_kl_loss)
         # loss_total = img_ratio * config.LAMBDA_IMAGE * img_loss_L2 + text_ratio * config.LAMBDA_TEXT * text_loss + kl_ratio * config.LAMBDA_KL * combined_kl_loss
-        print('loss_total: ', loss_total)
-        print('unnormalized_loss: ', unnormalized_loss)
-        print('img_ratio: ', img_ratio)
-        print('text_ratio: ', text_ratio)
-        print('kl_ratio: ', kl_ratio)
-        print('img_ratio * img_loss_L2: ', img_ratio * img_loss_L2)
-        print('text_ratio * text_loss: ', text_ratio * text_loss)
-        print('kl_ratio * combined_kl_loss: ', kl_ratio * combined_kl_loss)
+        # print('loss_total: ', loss_total)
+        # print('unnormalized_loss: ', unnormalized_loss)
+        # print('img_ratio: ', img_ratio)
+        # print('text_ratio: ', text_ratio)
+        # print('kl_ratio: ', kl_ratio)
+        # print('img_ratio * img_loss_L2: ', img_ratio * img_loss_L2)
+        # print('text_ratio * text_loss: ', text_ratio * text_loss)
+        # print('kl_ratio * combined_kl_loss: ', kl_ratio * combined_kl_loss)
 
         return {
                 'loss_total': loss_total,
