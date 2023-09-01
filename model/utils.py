@@ -47,12 +47,14 @@ def get_viewable_text(token_ids, tokenizer):
 
 
 def tensor_to_cv2(tensor, config=None):
-    # input: tensor of shape (3, 224, 224)
-    # output: numpy array of shape (224, 224, 3)
+    # input: tensor of shape (3, img_size, img_size)
+    # output: numpy array of shape (img_size, img_size, 3)
+
     if tensor.requires_grad:
         img = tensor.permute(1, 2, 0).cpu().detach().numpy()
     else:
         img = tensor.permute(1, 2, 0).cpu().numpy()
+
     # rgb to bgr
     img = img[:, :, ::-1].copy()
 
@@ -70,19 +72,30 @@ def tensor_to_cv2(tensor, config=None):
     
     return img
 
-def visualize_data(img_input, text_input, tokenizer, output=None, config=None, mask_img=False, mask_text=False, model=None):
+def visualize_data(img_input, text_input, tokenizer, output=None, config=None, mask_img=False, mask_text=False, model=None, sample_diffusion=False):
     gt_img = tensor_to_cv2(img_input[0], config)
     zero_img = tensor_to_cv2(torch.zeros_like(img_input[0]), config)
-
     text_gt = get_viewable_text(text_input["input_ids"][0], tokenizer)
     
     if output is not None:
         if hasattr(config, 'DIFFUSION') and config.DIFFUSION:
-            img_output = model.diffusion.sample(model.unet, 1, model.combined_embedding[0])
-            print('diffusion img_output: ', img_output)
-            print('diffusion img_output shape: ', img_output.shape)
-            img_output = tensor_to_cv2(img_output[0], config)
+            noised_img = img_input[0] + output['gt_img_noise'][0]
+            # gt_img = tensor_to_cv2(noised_img, config) # showing ground truth image with noise
+            if sample_diffusion:
+                img_output = model.diffusion.sample(model.unet, 1, model.combined_embedding[0], cfg_scale=0)[0]
+                # img_output = model.diffusion.sample(model.unet, 1, model.combined_embedding[0], cfg_scale=3)
+            else:
+                img_output = output['pred_img'][0]
+
+            gt_img = cv2.putText(gt_img, 'noise step: ' + str(output['noise_step'][0].item()), (0, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 1), 2)
+            zero_img = cv2.putText(zero_img, 'noise step: ' + str(output['noise_step'][0].item()), (0, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 1), 2)
+
+            img_output = tensor_to_cv2(img_output, config)
             # img_output = tensor_to_cv2(output['pred_img'][0], config)
+            if output['unconditioned']:
+                gt_img = cv2.putText(gt_img, '[unconditioned]', (0, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 1), 2)
+                img_output = cv2.putText(img_output, '[unconditioned]', (0, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 1), 2)
+                zero_img = cv2.putText(zero_img, '[unconditioned]', (0, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 1), 2)
 
         else:
             # visualizing predicted image and caption
@@ -91,6 +104,7 @@ def visualize_data(img_input, text_input, tokenizer, output=None, config=None, m
 
         pred_token_ids = torch.argmax(output['pred_text'][0], dim=1)
         text_output = get_viewable_text(pred_token_ids, tokenizer)
+
 
         if not mask_img and not mask_text: # vae
             disp_gt_img = cv2.putText(gt_img, 'ground truth: ' + text_gt, (0, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 1), 2)

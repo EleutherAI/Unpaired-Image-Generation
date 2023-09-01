@@ -97,7 +97,7 @@ class Down(nn.Module):
 
     def forward(self, x, t):
         x = self.maxpool_conv(x)
-        emb = self.emb_layer(t)[:, :, None, None].repeat(1, 1, x.shape[-2], x.shape[-1]) # this 
+        emb = self.emb_layer(t)[:, :, None, None].repeat(1, 1, x.shape[-2], x.shape[-1])
         # emb = self.emb_layer(t)[:, :, None, None]
         return x + emb
 
@@ -134,22 +134,28 @@ class UNet(nn.Module):
         self.device = device
         self.time_dim = time_dim
         self.inc = DoubleConv(c_in, 64)
-        self.down1 = Down(64, 128)
+        # self.down1 = Down(64, 128)
+        self.down1 = Down(64, 128, emb_dim=time_dim)
         self.sa1 = SelfAttention(128, 32)
-        self.down2 = Down(128, 256)
+        # self.down2 = Down(128, 256)
+        self.down2 = Down(128, 256, emb_dim=time_dim)
         self.sa2 = SelfAttention(256, 16)
-        self.down3 = Down(256, 256)
+        # self.down3 = Down(256, 256)
+        self.down3 = Down(256, 256, emb_dim=time_dim)
         self.sa3 = SelfAttention(256, 8)
 
         self.bot1 = DoubleConv(256, 512)
         self.bot2 = DoubleConv(512, 512)
         self.bot3 = DoubleConv(512, 256)
 
-        self.up1 = Up(512, 128)
+        # self.up1 = Up(512, 128)
+        self.up1 = Up(512, 128, emb_dim=time_dim)
         self.sa4 = SelfAttention(128, 16)
-        self.up2 = Up(256, 64)
+        # self.up2 = Up(256, 64)
+        self.up2 = Up(256, 64, emb_dim=time_dim)
         self.sa5 = SelfAttention(64, 32)
-        self.up3 = Up(128, 64)
+        # self.up3 = Up(128, 64)
+        self.up3 = Up(128, 64, emb_dim=time_dim)
         self.sa6 = SelfAttention(64, 64)
         self.outc = nn.Conv2d(64, c_out, kernel_size=1)
 
@@ -195,22 +201,28 @@ class UNet_conditional(nn.Module):
         self.device = device
         self.time_dim = time_dim
         self.inc = DoubleConv(c_in, 64)
-        self.down1 = Down(64, 128)
+        # self.down1 = Down(64, 128)
+        self.down1 = Down(64, 128, emb_dim=time_dim)
         self.sa1 = SelfAttention(128, 32)
-        self.down2 = Down(128, 256)
+        # self.down2 = Down(128, 256)
+        self.down2 = Down(128, 256, emb_dim=time_dim)
         self.sa2 = SelfAttention(256, 16)
-        self.down3 = Down(256, 256)
+        # self.down3 = Down(256, 256)
+        self.down3 = Down(256, 256, emb_dim=time_dim)
         self.sa3 = SelfAttention(256, 8)
 
         self.bot1 = DoubleConv(256, 512)
         self.bot2 = DoubleConv(512, 512)
         self.bot3 = DoubleConv(512, 256)
 
-        self.up1 = Up(512, 128)
+        # self.up1 = Up(512, 128)
+        self.up1 = Up(512, 128, emb_dim=time_dim)
         self.sa4 = SelfAttention(128, 16)
-        self.up2 = Up(256, 64)
+        # self.up2 = Up(256, 64)
+        self.up2 = Up(256, 64, emb_dim=time_dim)
         self.sa5 = SelfAttention(64, 32)
-        self.up3 = Up(128, 64)
+        # self.up3 = Up(128, 64)
+        self.up3 = Up(128, 64, emb_dim=time_dim)
         self.sa6 = SelfAttention(64, 64)
         self.outc = nn.Conv2d(64, c_out, kernel_size=1)
 
@@ -255,7 +267,33 @@ class UNet_conditional(nn.Module):
         x = self.sa6(x)
         output = self.outc(x)
         return output
+    
+class EMA:
+    def __init__(self, beta):
+        super().__init__()
+        self.beta = beta
+        self.step = 0
 
+    def update_model_average(self, ma_model, current_model):
+        for current_params, ma_params in zip(current_model.parameters(), ma_model.parameters()):
+            old_weight, up_weight = ma_params.data, current_params.data
+            ma_params.data = self.update_average(old_weight, up_weight)
+
+    def update_average(self, old, new):
+        if old is None:
+            return new
+        return old * self.beta + (1 - self.beta) * new
+
+    def step_ema(self, ema_model, model, step_start_ema=2000):
+        if self.step < step_start_ema:
+            self.reset_parameters(ema_model, model)
+            self.step += 1
+            return
+        self.update_model_average(ema_model, model)
+        self.step += 1
+
+    def reset_parameters(self, ema_model, model):
+        ema_model.load_state_dict(model.state_dict())
 
 if __name__ == '__main__':
     # net = UNet(device="cpu")

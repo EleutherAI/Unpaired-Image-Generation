@@ -57,9 +57,9 @@ class T2IVAE(nn.Module):
         self.combined_logvar_proj = nn.LazyLinear(self.config.LATENT_DIM)
 
         if hasattr(self.config, 'DIFFUSION') and self.config.DIFFUSION:
-            self.diffusion = Diffusion(img_size=self.img_size)
+            self.diffusion = Diffusion(img_size=self.img_size, noise_steps=1000)
             # self.unet = UNet()
-            self.unet = UNet_conditional(num_classes=self.config.LATENT_DIM).to(device)
+            self.unet = UNet_conditional(num_classes=self.config.LATENT_DIM,time_dim=self.config.LATENT_DIM).to(device)
         else:
             self.diffusion = None
             self.unet = None
@@ -120,19 +120,32 @@ class T2IVAE(nn.Module):
                 combined_embedding_means, combined_embedding_logvars  = self.get_combined_embedding(img_feat_proj, text_feat_proj)
             # combined_embedding_logvars -= 4 # lowering logvars by subtracting a constant (e.g. 3-5ish)
             self.combined_embedding = self.sample_gaussian(combined_embedding_means, combined_embedding_logvars) 
+            # self.combined_embedding = combined_embedding_means # TODO: REMOVE THIS LINE
         
 
         # img decoder
         if hasattr(self.config, 'DIFFUSION') and self.config.DIFFUSION:
             pred_img_means = None
             pred_img_logvars = None
-            noise_step = torch.randint(0, self.diffusion.noise_steps, (img.shape[0],)).to(device)
-            noised_img, noise = self.diffusion.noise_images(img, noise_step)
+            t = self.diffusion.sample_timesteps(img.shape[0]).to(device)
+            # noise_step = torch.randint(0, self.diffusion.noise_steps, (img.shape[0],)).to(device)
+            noised_img, noise = self.diffusion.noise_images(img, t)
             print('noised_img', noised_img.shape)
-            print('noise step', noise_step.shape)
+            print('noise', noise.shape)
+            print('noise step', t.shape)
             print('combined_embedding', self.combined_embedding.shape)
-            pred_noise = self.unet(noised_img, noise_step, self.combined_embedding)
+            
+            label = self.combined_embedding
+
+            # if np.random.random() < 0.1:
+            #     label = None # for classifer-free guidance
+            #     unconditioned = True
+            # else:
+            unconditioned = False
+                
+            pred_noise = self.unet(noised_img, t, label)
             pred_img = noised_img - pred_noise
+            # pred_img = noised_img + pred_noise
 
         else:
             # img_decoder_input = self.img_decoder_proj(combined_embedding).view(-1, 512, self.img_size // 32, self.img_size // 32)
@@ -171,15 +184,20 @@ class T2IVAE(nn.Module):
             "pred_img": pred_img,
             "pred_img_means": pred_img_means,
             "pred_img_logvars": pred_img_logvars,
+            "pred_img_noise": pred_noise,
+            "gt_img_noise": noise,
+            "noise_step": t,
             "pred_text": pred_text,
             "img_feats": img_feats,
             "text_feats": text_feats,
             "img_feat_proj": img_feat_proj,
             "text_feat_proj": text_feat_proj,
+            "combined_embedding": self.combined_embedding,
             "combined_embedding_means": combined_embedding_means,
             "combined_embedding_logvars": combined_embedding_logvars,
             "pred_img_t2i": pred_img_t2i,
             "pred_text_i2t": pred_text_i2t,
+            "unconditioned": unconditioned,
         }
     
 if __name__ == "__main__":
