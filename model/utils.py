@@ -99,8 +99,8 @@ def visualize_data(img_input, text_input, tokenizer, output=None, config=None, m
 
         else:
             # visualizing predicted image and caption
-            img_output = tensor_to_cv2(output['pred_img'][0], config)
-            # img_output = tensor_to_cv2(output['pred_img_means'][0], config)
+            # img_output = tensor_to_cv2(output['pred_img'][0], config)
+            img_output = tensor_to_cv2(output['pred_img_means'][0], config)
 
         pred_token_ids = torch.argmax(output['pred_text'][0], dim=1)
         text_output = get_viewable_text(pred_token_ids, tokenizer)

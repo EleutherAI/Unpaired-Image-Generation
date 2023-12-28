@@ -138,7 +138,7 @@ with torch.no_grad():
         output = model(img, text_input, mask_img, mask_text)
         print('combined embedding means (mean, std): ', output['combined_embedding_means'].mean(), output['combined_embedding_means'].std())
         print('combined embedding logvars (mean, std): ', output['combined_embedding_logvars'].mean(), output['combined_embedding_logvars'].std())
-        disp_img = visualize_data(img, text_input, model.tokenizer, output, config, mask_img, mask_text, model)
+        disp_img = visualize_data(img, text_input, model.tokenizer, output, config, mask_img, mask_text, model, sample_diffusion=True)
         
         cv2.imshow('img', disp_img)
         cv2.waitKey(0)

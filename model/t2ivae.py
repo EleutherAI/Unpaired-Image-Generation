@@ -66,11 +66,13 @@ class T2IVAE(nn.Module):
 
 
     def get_combined_embedding(self, img_feats, text_feats):
-        # print(img_feats.shape, text_feats.shape)
-        concat_embeddings = torch.cat((img_feats, text_feats), dim=1)
-        combined_embeddings = self.combined_mlp(concat_embeddings)
-        combined_means = self.combined_mean_proj(combined_embeddings)
-        combined_logvars = self.combined_logvar_proj(combined_embeddings) # TODO: try fixing this to a constant (eg -4) for testing
+        if not hasattr(self.config, 'CONDITIONING') or self.config.CONDITIONING == 'concat-mlp':
+            # print(img_feats.shape, text_feats.shape)
+            concat_embeddings = torch.cat((img_feats, text_feats), dim=1)
+            combined_embeddings = self.combined_mlp(concat_embeddings)
+            combined_means = self.combined_mean_proj(combined_embeddings)
+            combined_logvars = self.combined_logvar_proj(combined_embeddings) # TODO: try fixing this to a constant (eg -4) for testing
+            # combined_logvars = -4 * torch.ones_like(combined_means)
         return combined_means, combined_logvars
     
     def sample_gaussian(self, mu, logvar):
@@ -78,7 +80,7 @@ class T2IVAE(nn.Module):
         eps = torch.randn_like(std)
         return mu + eps * std
 
-    def forward(self, img, text_inputs, mask_img=False, mask_text=False):
+    def forward(self, img, text_inputs, mask_img=False, mask_text=False, use_diffusion=False):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         text = text_inputs["input_ids"].to(device) # token ids (batch_size, seq_len)
 
@@ -124,7 +126,8 @@ class T2IVAE(nn.Module):
         
 
         # img decoder
-        if hasattr(self.config, 'DIFFUSION') and self.config.DIFFUSION:
+        # if hasattr(self.config, 'DIFFUSION') and self.config.DIFFUSION:
+        if use_diffusion:
             pred_img_means = None
             pred_img_logvars = None
             t = self.diffusion.sample_timesteps(img.shape[0]).to(device)
@@ -153,7 +156,12 @@ class T2IVAE(nn.Module):
             pred_img_gaussian = self.gaussian_img_decoder(self.combined_embedding)
             pred_img_means = pred_img_gaussian[:, :3, :, :]
             pred_img_logvars = pred_img_gaussian[:, 3:, :, :] # lowering logvars by subtracting a constant (e.g. 3-5ish)
-            pred_img = self.sample_gaussian(pred_img_means, pred_img_logvars - 5)
+            pred_img = self.sample_gaussian(pred_img_means, pred_img_logvars) # - 5)
+            pred_noise = torch.zeros_like(pred_img)
+            noise = torch.zeros_like(pred_img)
+            t = torch.zeros(img.shape[0]).to(device)
+            unconditioned = False
+
         # pred_img = pred_img_means
         
         # text decoder
@@ -167,7 +175,7 @@ class T2IVAE(nn.Module):
         # t2i_input = self.img_decoder_proj(sampled_text_latent).view(-1, 512, self.img_size // 32, self.img_size // 32)
         # t2i_input = self.img_decoder_proj(self.combined_embedding).view(-1, 512, self.img_size // 32, self.img_size // 32)
         # pred_img_t2i = self.img_decoder(t2i_input)
-        pred_img_t2i = pred_img_means
+        # pred_img_t2i = pred_img_means
         # pred_img_t2i_gaussian = self.gaussian_img_decoder(t2i_input)
         # pred_img_t2i_means = pred_img_t2i_gaussian[:, :3, :, :]
         # pred_img_t2i_logvars = pred_img_t2i_gaussian[:, 3:, :, :]
@@ -195,8 +203,8 @@ class T2IVAE(nn.Module):
             "combined_embedding": self.combined_embedding,
             "combined_embedding_means": combined_embedding_means,
             "combined_embedding_logvars": combined_embedding_logvars,
-            "pred_img_t2i": pred_img_t2i,
-            "pred_text_i2t": pred_text_i2t,
+            # "pred_img_t2i": pred_img_t2i,
+            # "pred_text_i2t": pred_text_i2t,
             "unconditioned": unconditioned,
         }
     
@@ -216,8 +224,8 @@ if __name__ == "__main__":
     print("text_feat_proj", output["text_feat_proj"].shape)
     print("combined_embedding_means", output["combined_embedding_means"].shape)
     print("combined_embedding_logvars", output["combined_embedding_logvars"].shape)
-    print("pred_img_t2i", output["pred_img_t2i"].shape)
-    print("pred_text_i2t", output["pred_text_i2t"].shape)
+    # print("pred_img_t2i", output["pred_img_t2i"].shape)
+    # print("pred_text_i2t", output["pred_text_i2t"].shape)
 
     decoded_text = model.tokenizer.batch_decode(output["pred_text"], skip_special_tokens=True)
     print("decoded pred_text: ", decoded_text)
