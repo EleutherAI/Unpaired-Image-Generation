@@ -1,10 +1,20 @@
-BATCH_SIZE: 16
-NUM_EPOCHS: 10
+BATCH_SIZE: 128
+NUM_EPOCHS: 20
 NUM_WORKERS: 12
 LEARNING_RATE: 0.0001
-MAX_SEQ_LEN: 32
-LATENT_DIM: 2048
-DATASET: coco
-LAMBDA_IMAGE: 1.0
-LAMBDA_TEXT: 0.05
-LAMBDA_KL: 0.01
+MAX_SEQ_LEN: 8 # max sequence length for text, in tokens
+LATENT_DIM: 1024 # dimension of multimodal latent space
+DATASET: cifar10 # cifar10, cifar100, coco
+ARCHITECTURE: resnet18 # resnet18, resnet50, resnet101, resnet152 
+
+# to test img reconstruction, set MASKING to False and LAMBDA_IMAGE to 1.0, LAMBDA_TEXT to 0.0, LAMBDA_KL to 0.0
+MASKING: True # whether the images or text are randomly masked during training
+LAMBDA_IMAGE: 1.0 # weight of image loss
+LAMBDA_TEXT: 0.05 # weight of text loss
+LAMBDA_KL: 0.01 # weight of KL loss with unit Gaussian prior
+WARMUP_EPOCHS: 0 # number of warmup epochs (unmasked training)
+CLIP_GRADS: False
+CLIP_GRADS_NORM: 1.0 # gradient clipping norm if CLIP_GRADS is True
+DIFFUSION: True # whether to use diffusion img decoder, otherwise inverse resnet
+CONDITIONING: concat-mlp
+# PRETRAINED_IMG_ENC: defailt_latest # file name of pretrained image encoder, if any

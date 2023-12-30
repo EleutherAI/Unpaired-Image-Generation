@@ -31,9 +31,6 @@ def get_viewable_text(token_ids, tokenizer):
     # decoding text from token ids, stopping at eos token
     viewable_text = ''
 
-    # # getting index of eos token
-    # eos_token_idx = token_ids.tolist().index(1)
-
     # checking if eos token is in token_ids
     if 1 in token_ids:
         eos_token_idx = token_ids.tolist().index(1)
@@ -157,13 +154,8 @@ class MaskedDataset(Dataset):
     def __len__(self):
         return len(self.dataset)
     
-def get_masks(warmup=False): # TODO: add warmup condition, move out of trainer
+def get_masks():
     # 3 possible states
-    # if warmup:
-    #     mask_state = random.randint(0, 2)
-    # else:
-    #     mask_state = random.randint(0, 1) # only mask one thing at a time if not warmup
-
     mask_state = random.randint(0, 2)
 
     if mask_state == 0:
